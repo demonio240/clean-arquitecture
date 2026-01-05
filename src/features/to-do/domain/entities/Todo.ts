@@ -120,10 +120,11 @@ export class Todo {
     const exists = this._labels.some(label => label.equals(newLabel));
     if (exists) {
        throw new LabelAlreadyExistsError(newLabel.value);
+       
     }
 
     this._labels.push(newLabel);
-
+    
   }
 
   // 3. MECANISMO PARA SACAR LOS EVENTOS

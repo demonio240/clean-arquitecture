@@ -48,4 +48,9 @@ export class LocalStorageTodoRepository implements TodoRepository {
     // ✅ solo muta el snapshot (state) en memoria
     this.client.setItem<PersistedTodo>(`todo_${todo.id.value}`, serializeTodo(todo));
   }
+
+  async delete(id: TodoId): Promise<void> {
+    this.client.removeItem(`todo_${id.value}`);
+  }
+
 }
