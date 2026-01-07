@@ -33,12 +33,10 @@ export class CreateTodo {
   // RECORDAR USAR LA VALIDACION POR ROLES 
   async execute(input: CreateTodoDTO, ctx: ActorContext): Promise<TodoDTO> {
 
-    try{
-      this.logger.info("Intentando crear TODO", { user: input.title });
+    this.logger.info("Intentando crear TODO", { user: input.title });
+    requirePermission(ctx, PERMISSIONS.TODO_CREATE);
 
-      // logica del negocio
-      // Validar permisos
-      requirePermission(ctx, PERMISSIONS.TODO_CREATE);
+    try{
 
       const id = new TodoId(this.idGenerator.generate());
       const title = new TodoTitle(input.title);
@@ -55,14 +53,20 @@ export class CreateTodo {
       return todoDTO(todo);
 
     } catch (err) { 
-      this.logger.error("Error creando TODO", err as Error, { input });
-      this.metrics.increment("todo_created_failure");
-      throw mapDomainError(err);
+      const appErr = mapDomainError(err);
+
+      const outcome = appErr.telemetry?.outcome ?? "failure";
+      this.metrics.increment(`todo_created_${outcome}`);
+
+      if (outcome === "not_found" || outcome === "forbidden" || outcome === "validation") {
+        this.logger.warn("No se pudo crear el TODO", { user: input.title, code: appErr.code });
+      } else {
+        this.logger.error("Error creando TODO", appErr, { input });
+      }
+
+      throw appErr;
     }
-
-    
   }
-
 }
 
 function todoDTO(todo: Todo): TodoDTO {
