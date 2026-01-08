@@ -4,71 +4,98 @@ import { TodoTitle } from "../../../domain/value-objects/TodoTitle";
 import type { ActorContext } from "../../../../../shared/authz/ActorContext";
 import { requirePermission } from "../../../../../shared/authz/guards";
 import { PERMISSIONS } from "../../../../../shared/authz/permissions";
-import { NotFoundError } from "../../../../../shared/errors/AppError";
 import type { TodoDTO } from "../../dto/TodoDTO";
 import type { UpdateTodoContentInput } from "../../dto/UpdateTodoContentDTO";
 import { mapDomainError } from "../../errors/mapDomainError";
+import { TodoNotFoundError } from "../../errors/TodoNotFound";
+import type { Metrics } from "../../../../../shared/observability/Metrics";
+import type { Logger } from "../../../../../shared/observability/Logger";
 
+export type UpdateTodoContentResult =
+  | { status: "updated"; todo: TodoDTO }
+  | { status: "no_update"; todo: TodoDTO };
 
 
 export class UpdateTodoContent {
 
     private readonly repo: TodoRepository
+    private readonly metrics: Metrics
+    private readonly logger: Logger;
+
+
   constructor(
     repo: TodoRepository,
+    metrics: Metrics,
+    logger: Logger,
     // opcional si ya tienes permisos:
     // private readonly authz: AuthContext
     // opcional si publicas eventos:
     // private readonly eventBus: DomainEventBus
   ) {
     this.repo = repo;
+    this.metrics = metrics;
+    this.logger = logger;
   }
 
-  async execute(input: UpdateTodoContentInput, ctx: ActorContext): Promise<TodoDTO> {
-    try {
-        // 0) Validaciones de autorización (si aplica) HACER!!!!!
-        requirePermission(ctx, PERMISSIONS.TODO_UPDATE);
+  async execute(input: UpdateTodoContentInput, ctx: ActorContext): Promise<UpdateTodoContentResult> {
+    
+    requirePermission(ctx, PERMISSIONS.TODO_UPDATE);
 
+    try {
       // 1) Value Objects (validación fuerte)
       const id = new TodoId(input.id);
 
       // 2) Cargar agregado
       const todo = await this.repo.getById(id);
-      if (!todo) throw new NotFoundError("NOT_FOUND", `Todo with ID ${input.id} not found`);
+      if (!todo) throw new TodoNotFoundError(input.id, "update_content");
+
+      let changed = false;
+
 
       // 3) Aplicar cambios (reglas del dominio adentro)
       if (input.title !== undefined) {
-        const title = new TodoTitle(input.title);
-        // usa el método que tengas (ej: rename / changeTitle / updateTitle)
-        todo.changeTitle(title);
+        changed = todo.changeTitle(new TodoTitle(input.title)) || changed;
+
       }
 
       if (input.description !== undefined) {
-        // si description no tiene VO, pasa string; si tiene reglas, crea VO.
-        todo.changeDescription(input.description);
+        changed = todo.changeDescription(input.description) || changed;
+      }
+      
+      const tododto: TodoDTO = {
+         id: todo.id.value,
+         title: todo.title,
+         description: todo.description,
+         status: todo.status,
+         labels: todo.labels.map((l) => l.value),
+       };
+
+      if (!changed) {
+        this.metrics.increment("todo_update_content_no_update");
+        this.logger.info("UpdateContent no-op (sin cambios)", { todoId: input.id, user: ctx.userId });
+        return { status: "no_update", todo: tododto };
       }
 
       // 4) Persistir
       await this.repo.save(todo);
 
-      // 5) Eventos (si tu Todo acumula eventos)
-      // const events = todo.pullDomainEvents();
-      // await this.eventBus.publishAll(events);
-
-      // 6) DTO salida
-      // return TodoDTO(todo);
-
-        const tododto: TodoDTO = {
-          id: todo.id.value,
-          title: todo.title,
-          description: todo.description,
-          status: todo.status,
-          labels: todo.labels.map((l) => l.value),
-        };
-
-      return tododto;
+      this.metrics.increment("todo_update_content_success");
+      this.logger.info("Contenido actualizado", { todoId: input.id, user: ctx.userId });
+      
+      return { status: "updated", todo: tododto }
     } catch (err) {
-      throw mapDomainError(err);
+      const appErr = mapDomainError(err);
+
+      const outcome = appErr.telemetry?.outcome ?? "failure";
+      this.metrics.increment(`todo_update_content_${outcome}`);
+
+      if (outcome === "not_found" || outcome === "forbidden" || outcome === "validation") {
+        this.logger.warn("No se pudo actualizar el contenido del TODO", { todoId: input.id, user: ctx.userId, code: appErr.code });
+      } else {
+        this.logger.error("Error actualizando contenido del TODO", appErr, { input, user: ctx.userId });
+      }
+ 
+      throw appErr;
     }
   }
 }

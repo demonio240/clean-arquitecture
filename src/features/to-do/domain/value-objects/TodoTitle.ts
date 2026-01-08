@@ -31,5 +31,10 @@ export class TodoTitle {
     this.value = trimmedTitle;
   }
 
+  equals(other: TodoTitle): boolean {
+    return this.value === other.value;
+  }
+
+
   public getValue(): string { return this.value; }
 }

@@ -92,21 +92,35 @@ export class Todo {
   }
 
   // 3. Cambiar el título (Usando el Value Object)
-  public changeTitle(newTitle: TodoTitle): void {
+  public changeTitle(newTitle: TodoTitle): boolean {
+
+    if(this._title.equals(newTitle)) return false;
+
     if (this._status === TodoCompletionStatus.DONE) {
       throw new TodoImmutableError("Intentó cambiar el título");
     }
 
     this._title = newTitle;
+  
+    return true;
+  
   }
 
   // 5. Cambiar la descripción
-  public changeDescription(newDescription: string): void {
+  public changeDescription(newDescription: string): boolean {
+
+     const current = this._description ?? "";
+    if (current === newDescription) return false;
+ 
+    
     if (this._status === TodoCompletionStatus.DONE) {
       throw new TodoImmutableError("Intentó cambiar la descripción");
     }
 
     this._description = newDescription;
+  
+    return true;
+  
   }
 
 

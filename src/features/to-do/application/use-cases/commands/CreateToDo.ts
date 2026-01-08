@@ -73,7 +73,7 @@ function todoDTO(todo: Todo): TodoDTO {
 
   return {
     id: todo.id.value,
-    title: todo.title,
+    title: todo.title,           
     description: todo.description,
     status: todo.status as TodoCompletionStatus,
     labels: todo.labels.map((l) => l.value),
