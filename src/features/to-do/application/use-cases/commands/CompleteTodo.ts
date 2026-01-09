@@ -60,9 +60,6 @@ export class CompleteTodo {
         this.logger.error("Error completando TODO", appErr, { todoId: input.id, user: ctx.userId });
       }
 
-      if (appErr.telemetry?.swallow) return;
-      
-
       throw appErr;
     }
   }

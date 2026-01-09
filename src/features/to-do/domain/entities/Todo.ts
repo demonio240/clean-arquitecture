@@ -9,7 +9,7 @@ import { TodoCompletedEvent } from '../events/TodoCompletedEvent';
 import { TodoAlreadyCompletedError } from '../errors/TodoAlreadyCompletedError';
 import { TodoImmutableError } from '../errors/TodoImmutableError';
 import { LabelAlreadyExistsError } from '../errors/LabelAlreadyExistsError';
-import { TodoAlreadyPendingError } from '../errors/TodoAlreadyPendingError';
+//import { TodoAlreadyPendingError } from '../errors/TodoAlreadyPendingError';
 import { TodoReopenEvent } from '../events/TodoReopenEvent';
 
 export type TodoProps = {
@@ -81,14 +81,18 @@ export class Todo {
   }
 
   // 2. Reabrir la tarea
-  public reopen(date: Date): void {
+  public reopen(date: Date): boolean {
     if (this._status === TodoCompletionStatus.PENDING) {
-      throw new TodoAlreadyPendingError(this.id); // o lanzar un error tipo "AlreadyPending"
+      
+       return false; 
+      //throw new TodoAlreadyPendingError(this.id); // Buscar que hacer con TodoAlreadyPendingError o eliminarlo
     }
 
     this._status = TodoCompletionStatus.PENDING;
 
     this.addDomainEvent(new TodoReopenEvent(this.id, date));
+
+    return true;
   }
 
   // 3. Cambiar el título (Usando el Value Object)

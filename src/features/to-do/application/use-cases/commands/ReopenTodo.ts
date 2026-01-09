@@ -4,49 +4,85 @@ import { PERMISSIONS } from "../../../../../shared/authz/permissions";
 import type { Logger } from "../../../../../shared/observability/Logger";
 import type { Metrics } from "../../../../../shared/observability/Metrics";
 import type { Clock } from "../../../../../shared/time/SystemClock";
-import type { TodoRepository } from "../../../domain/repositories/TodoRepository";
+import type { UnitOfWork } from "../../../../../shared/uow/UnitOfWork";
 import { TodoId } from "../../../domain/value-objects/TodoId";
+import type { TodoDTO } from "../../dto/TodoDTO";
 import { mapDomainError } from "../../errors/mapDomainError";
 import { TodoNotFoundError } from "../../errors/TodoNotFound";
+import type { Tx } from "../../uow/Tx";
+
+export type UpdateTodoContentResult =
+  | { status: "updated"; todo: TodoDTO }
+  | { status: "no_update"; todo: TodoDTO };
 
 export class ReopenTodo {
-    private readonly repo: TodoRepository
     private readonly metrics: Metrics
     private readonly logger: Logger
+    private readonly uow: UnitOfWork<Tx>;
     private readonly date: Clock
 
   constructor(
-    repo: TodoRepository,
+
     metrics: Metrics,
     logger: Logger,
+    uow: UnitOfWork<Tx>,
     date: Clock
     
   ) {
-    this.repo = repo;
+    
     this.metrics = metrics;
     this.logger = logger;
+    this.uow = uow;
     this.date = date
   }
 
-  async execute(id: string, ctx: ActorContext): Promise<void> {
+  async execute(id: string, ctx: ActorContext): Promise<UpdateTodoContentResult> {
     // 1) Authz fuera del try (así no mezclas outcomes)
     this.logger.info("Intentando reabrir TODO", { todoId: id, user: ctx.userId }); 
     requirePermission(ctx, PERMISSIONS.TODO_UPDATE); // ya lanza un appError
 
     try {
-      const todoId = new TodoId(id);
-      const todo = await this.repo.getById(todoId);
+      const result = await this.uow.transaction<UpdateTodoContentResult>(async (tx): Promise<UpdateTodoContentResult> => {
+          const todoId = new TodoId(id);
+          const todo = await tx.todoRepo.getById(todoId);
 
-      if (!todo) {
-        // ✅ No AppError aquí; lanzas tu error del feature
-        throw new TodoNotFoundError(id, "reopen");
-      }
+          if (!todo) {
+            throw new TodoNotFoundError(id, "reopen");
+          }
 
-      todo.reopen(this.date.now());
-      await this.repo.save(todo);
+          const changed = todo.reopen(this.date.now());
 
-      this.metrics.increment("todo_reopen_success");
-      this.logger.info("TODO reabierto exitosamente", { todoId: id, user: ctx.userId });
+          if (!changed) {
+            this.metrics.increment("todo_reopen_no_update");
+            return { status: "no_update", todo: {
+              id: todo.id.value,
+              title: todo.title,
+              description: todo.description,
+              status: todo.status,
+              labels: todo.labels.map((l) => l.value),
+            } };
+          }
+
+
+          await tx.todoRepo.save(todo);
+
+          const events = todo.pullDomainEvents();
+          await tx.eventBus.publish(events);
+          
+
+          this.metrics.increment("todo_reopen_success");
+          this.logger.info("TODO reabierto exitosamente", { todoId: id, user: ctx.userId });
+
+          return { status: "updated", todo: {
+            id: todo.id.value,
+            title: todo.title,
+            description: todo.description,
+            status: todo.status,
+            labels: todo.labels.map((l) => l.value),
+          } };
+      })
+
+      return result;
     } catch (err) {
         const appErr = mapDomainError(err);
         
@@ -60,9 +96,6 @@ export class ReopenTodo {
         } else {
           this.logger.error("Error reabriendo TODO", appErr, { todoId: id, user: ctx.userId });
         }
-      
-        // 4) swallow solo si aplica (en reopen normalmente NO aplica, pero queda genérico)
-        if (appErr.telemetry?.swallow) return;
       
         throw appErr;
     }

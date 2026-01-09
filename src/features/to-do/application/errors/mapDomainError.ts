@@ -10,6 +10,7 @@ import { TodoImmutableError } from "../../domain/errors/TodoImmutableError";
 import { AppError, ConflictError, NotFoundError, UnexpectedError, ValidationError } from "../../../../shared/errors/AppError";
 import { InvalidTodoLabel } from "../../domain/errors/InvalidTodoLabel";
 import { TodoNotFoundError } from "./TodoNotFound";
+import { TodoAlreadyPendingError } from "../../domain/errors/TodoAlreadyPendingError";
 
 export function mapDomainError(err: unknown): AppError {
   // ✅ 1) Si ya es AppError (Forbidden incluido), pásalo tal cual
@@ -54,6 +55,17 @@ export function mapDomainError(err: unknown): AppError {
       "LABEL_ALREADY_EXISTS",
       err.message,
       { outcome: "duplicate", swallow: true },
+      {
+        err: err
+      }
+    );
+  }
+
+  if (err instanceof TodoAlreadyPendingError) {
+    return new ConflictError(
+      "TODO_ALREADY_PENDING",
+      err.message,
+      { outcome: "no_update", swallow: true },
       {
         err: err
       }

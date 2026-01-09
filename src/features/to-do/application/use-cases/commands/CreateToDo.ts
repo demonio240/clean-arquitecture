@@ -15,13 +15,15 @@ import type { Metrics } from "../../../../../shared/observability/Metrics";
 import type { Logger } from '../../../../../shared/observability/Logger';
 
 
+export type CreateTodoResult =
+  | { status: "created"; todo: TodoDTO }
+  | { status: "todo_id_already_exists"; todo: TodoDTO };
+
 export class CreateTodo {
   private readonly repo: TodoRepository;
   private readonly idGenerator: IdGenerator
   private readonly metrics: Metrics;
   private readonly logger: Logger; // Reemplazar con inyección de Logger si es necesario
-
-
 
   constructor(repo: TodoRepository, idGenerator: IdGenerator, metrics: Metrics, logger: Logger) {
     this.logger = logger;
@@ -31,7 +33,7 @@ export class CreateTodo {
   }
 
   // RECORDAR USAR LA VALIDACION POR ROLES 
-  async execute(input: CreateTodoDTO, ctx: ActorContext): Promise<TodoDTO> {
+  async execute(input: CreateTodoDTO, ctx: ActorContext): Promise<CreateTodoResult> {
 
     this.logger.info("Intentando crear TODO", { user: input.title });
     requirePermission(ctx, PERMISSIONS.TODO_CREATE);
@@ -50,21 +52,31 @@ export class CreateTodo {
 
       await this.repo.save(todo);
       this.metrics.increment("todo_created_success");
-      return todoDTO(todo);
+      return { status: "created", todo: todoDTO(todo) };
 
     } catch (err) { 
-      const appErr = mapDomainError(err);
+        const appErr = mapDomainError(err);
 
-      const outcome = appErr.telemetry?.outcome ?? "failure";
-      this.metrics.increment(`todo_created_${outcome}`);
+        const outcome = appErr.telemetry?.outcome ?? "failure";
+        this.metrics.increment(`todo_created_${outcome}`);
 
-      if (outcome === "not_found" || outcome === "forbidden" || outcome === "validation") {
-        this.logger.warn("No se pudo crear el TODO", { user: input.title, code: appErr.code });
-      } else {
-        this.logger.error("Error creando TODO", appErr, { input });
-      }
+        if (outcome === "not_found" || outcome === "forbidden" || outcome === "validation") {
+          this.logger.warn("No se pudo crear el TODO", { user: input.title, code: appErr.code });
+        } else {
+          this.logger.error("Error creando TODO", appErr, { input });
+        }
 
-      throw appErr;
+        if (appErr.telemetry?.swallow) {
+          const existing = await this.repo.getById();
+          
+
+    if (!existing) throw appErr; // si no aparece, algo raro pasó
+
+    return { status: "todo_id_already_exists", todo: toDTO(existing) };
+
+        }
+
+        throw appErr;
     }
   }
 }

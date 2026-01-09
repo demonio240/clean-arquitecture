@@ -1,5 +1,5 @@
 
-export type ErrorOutcome = "duplicate" | "not_found" | "forbidden" | "validation" | "failure";
+export type ErrorOutcome = "duplicate" | "not_found" | "forbidden" | "validation" | "failure" | "no_update";
 
 export type TelemetryHint = {
   outcome?: ErrorOutcome;
