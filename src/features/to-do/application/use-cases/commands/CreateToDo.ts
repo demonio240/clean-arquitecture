@@ -7,12 +7,12 @@ import { TodoTitle } from "../../../domain/value-objects/TodoTitle";
 import type { ActorContext } from "../../../../../shared/authz/ActorContext";
 import { requirePermission } from "../../../../../shared/authz/guards";
 import { PERMISSIONS } from "../../../../../shared/authz/permissions";
-import type { IdGenerator } from "../../../../../shared/ids/IdGenerator";
 import type { CreateTodoDTO } from "../../dto/CreateTodoDTO";
 import type { TodoDTO } from "../../dto/TodoDTO";
 import { mapDomainError } from "../../errors/mapDomainError";
 import type { Metrics } from "../../../../../shared/observability/Metrics";
 import type { Logger } from '../../../../../shared/observability/Logger';
+import type { TodoUniquenessChecker } from "../../../domain/services/TodoUniquenessChecker";
 
 
 export type CreateTodoResult =
@@ -21,28 +21,39 @@ export type CreateTodoResult =
 
 export class CreateTodo {
   private readonly repo: TodoRepository;
-  private readonly idGenerator: IdGenerator
+  private readonly uniquenessChecker: TodoUniquenessChecker;
   private readonly metrics: Metrics;
   private readonly logger: Logger; // Reemplazar con inyección de Logger si es necesario
+  
 
-  constructor(repo: TodoRepository, idGenerator: IdGenerator, metrics: Metrics, logger: Logger) {
+  constructor(repo: TodoRepository, uniquenessChecker: TodoUniquenessChecker,metrics: Metrics, logger: Logger) {
     this.logger = logger;
     this.repo = repo;
-    this.idGenerator = idGenerator;
+    this.uniquenessChecker = uniquenessChecker;
     this.metrics = metrics;
   }
 
-  // RECORDAR USAR LA VALIDACION POR ROLES 
   async execute(input: CreateTodoDTO, ctx: ActorContext): Promise<CreateTodoResult> {
 
-    this.logger.info("Intentando crear TODO", { user: input.title });
+    this.logger.info("Intentando crear TODO", { todoId: input.id, title: input.title });
     requirePermission(ctx, PERMISSIONS.TODO_CREATE);
 
     try{
 
-      const id = new TodoId(this.idGenerator.generate());
+      const id = new TodoId(input.id);
+
+      const exists = await this.repo.getById(id);
+      if (exists){ 
+        this.logger.info("Idempotencia activada: Todo ya existía", { id: input.id });
+        this.metrics.increment("todo_create_idempotency_hit");
+
+        return  { status: "todo_id_already_exists", todo: todoDTO(exists) };
+      }
+
       const title = new TodoTitle(input.title);
-  
+
+      await this.uniquenessChecker.ensureUnique(title);
+
       const todo = Todo.create(id, title, input.description ?? "");
 
       for (const raw of input.labels ?? []) {
@@ -61,19 +72,9 @@ export class CreateTodo {
         this.metrics.increment(`todo_created_${outcome}`);
 
         if (outcome === "not_found" || outcome === "forbidden" || outcome === "validation") {
-          this.logger.warn("No se pudo crear el TODO", { user: input.title, code: appErr.code });
+          this.logger.warn("No se pudo crear el TODO", { title: input.title, code: appErr.code });
         } else {
           this.logger.error("Error creando TODO", appErr, { input });
-        }
-
-        if (appErr.telemetry?.swallow) {
-          const existing = await this.repo.getById();
-          
-
-    if (!existing) throw appErr; // si no aparece, algo raro pasó
-
-    return { status: "todo_id_already_exists", todo: toDTO(existing) };
-
         }
 
         throw appErr;

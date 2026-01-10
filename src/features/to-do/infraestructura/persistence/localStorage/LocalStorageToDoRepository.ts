@@ -53,4 +53,22 @@ export class LocalStorageTodoRepository implements TodoRepository {
     this.client.removeItem(`todo_${id.value}`);
   }
 
+  async getByTitle(title: TodoTitle): Promise<Todo | null> {
+    // 1. Obtenemos todos los objetos crudos (PersistedTodo) que empiecen por "todo_"
+    const allTodosRaw = this.client.getAllWithPrefix<PersistedTodo>("todo_");
+
+    // 2. Buscamos en memoria (Array.find)
+    const match = allTodosRaw.find((item) => item.title === title.getValue());
+
+    // 3. Si existe, lo deserializamos a entidad de Dominio
+    if (!match) return null;
+    
+    // Reutilizamos tu función de deserialización existente
+    // (Asegúrate de que deserializeTodo sea accesible aquí o esté dentro de la clase)
+    return deserializeTodo(match); 
+  }
+
+  
 }
+
+

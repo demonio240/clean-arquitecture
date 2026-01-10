@@ -23,6 +23,24 @@ export class LocalStorageClient {
     }
   }
 
+  getAllWithPrefix<T>(prefix: string): T[] {
+    const items: T[] = [];
+    
+    // Iteramos sobre todo el LocalStorage del navegador
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      
+      if (key && key.startsWith(prefix)) {
+        // Reutilizamos tu getItem seguro con try/catch
+        const val = this.getItem<T>(key);
+        if (val) {
+          items.push(val);
+        }
+      }
+    }
+    return items;
+  }
+
   removeItem(key: string): void {
     localStorage.removeItem(key);
   }

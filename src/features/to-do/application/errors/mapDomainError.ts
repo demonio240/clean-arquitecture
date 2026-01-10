@@ -11,6 +11,7 @@ import { AppError, ConflictError, NotFoundError, UnexpectedError, ValidationErro
 import { InvalidTodoLabel } from "../../domain/errors/InvalidTodoLabel";
 import { TodoNotFoundError } from "./TodoNotFound";
 import { TodoAlreadyPendingError } from "../../domain/errors/TodoAlreadyPendingError";
+import { TodoTitleAlreadyExistsError } from "../../domain/errors/TodoTitleAlreadyExistsError";
 
 export function mapDomainError(err: unknown): AppError {
   // ✅ 1) Si ya es AppError (Forbidden incluido), pásalo tal cual
@@ -47,6 +48,15 @@ export function mapDomainError(err: unknown): AppError {
       {
         err: err
       }
+    );
+  }
+
+  if (err instanceof TodoTitleAlreadyExistsError) {
+    return new ConflictError(
+      "TODO_TITLE_ALREADY_EXISTS", // Código de error para el frontend
+      err.message,
+      { outcome: "duplicate" },    // Outcome para métricas
+      { err }
     );
   }
 
@@ -92,6 +102,8 @@ export function mapDomainError(err: unknown): AppError {
         err: err
       }
     );
+
+    
   }
 
   // ✅ 3) Fallback (sin perder info útil)
