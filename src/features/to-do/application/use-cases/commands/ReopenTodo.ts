@@ -62,14 +62,12 @@ export class ReopenTodo {
               labels: todo.labels.map((l) => l.value),
             } };
           }
-
-
+          
           await tx.todoRepo.save(todo);
 
           const events = todo.pullDomainEvents();
           await tx.eventBus.publish(events);
           
-
           this.metrics.increment("todo_reopen_success");
           this.logger.info("TODO reabierto exitosamente", { todoId: id, user: ctx.userId });
 
@@ -92,6 +90,7 @@ export class ReopenTodo {
         
         // 3) Log por severidad según outcome (evita "error" para not_found)
         if (outcome === "not_found" || outcome === "forbidden" || outcome === "validation") {
+          
           this.logger.warn("No se pudo reabrir el TODO", { todoId: id, user: ctx.userId, code: appErr.code });
         } else {
           this.logger.error("Error reabriendo TODO", appErr, { todoId: id, user: ctx.userId });

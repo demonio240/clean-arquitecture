@@ -10,6 +10,7 @@ import { mapDomainError } from "../../errors/mapDomainError";
 import { TodoNotFoundError } from "../../errors/TodoNotFound";
 import type { Metrics } from "../../../../../shared/observability/Metrics";
 import type { Logger } from "../../../../../shared/observability/Logger";
+import type { TodoUniquenessChecker } from "../../../domain/services/TodoUniquenessChecker";
 
 export type UpdateTodoContentResult =
   | { status: "updated"; todo: TodoDTO }
@@ -17,21 +18,19 @@ export type UpdateTodoContentResult =
 
 
 export class UpdateTodoContent {
-
+  private readonly uniquenessChecker: TodoUniquenessChecker;
     private readonly repo: TodoRepository
     private readonly metrics: Metrics
     private readonly logger: Logger;
 
 
   constructor(
+    uniquenessChecker: TodoUniquenessChecker,
     repo: TodoRepository,
     metrics: Metrics,
     logger: Logger,
-    // opcional si ya tienes permisos:
-    // private readonly authz: AuthContext
-    // opcional si publicas eventos:
-    // private readonly eventBus: DomainEventBus
   ) {
+    this.uniquenessChecker = uniquenessChecker;
     this.repo = repo;
     this.metrics = metrics;
     this.logger = logger;
@@ -39,6 +38,7 @@ export class UpdateTodoContent {
 
   async execute(input: UpdateTodoContentInput, ctx: ActorContext): Promise<UpdateTodoContentResult> {
     
+    this.logger.info("Intentando actualizar contenido del TODO", { todoId: input.id, user: ctx.userId });
     requirePermission(ctx, PERMISSIONS.TODO_UPDATE);
 
     try {
@@ -51,14 +51,16 @@ export class UpdateTodoContent {
 
       let changed = false;
 
-
       // 3) Aplicar cambios (reglas del dominio adentro)
-      if (input.title !== undefined) {
-        changed = todo.changeTitle(new TodoTitle(input.title)) || changed;
 
-      }
+      const nextTitle = new TodoTitle(input.title ?? todo.title);
+
+      const titleChanged = await todo.changeTitle(nextTitle, this.uniquenessChecker);
+      changed = changed || titleChanged;
 
       if (input.description !== undefined) {
+
+
         changed = todo.changeDescription(input.description) || changed;
       }
       

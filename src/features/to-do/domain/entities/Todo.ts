@@ -11,6 +11,7 @@ import { TodoImmutableError } from '../errors/TodoImmutableError';
 import { LabelAlreadyExistsError } from '../errors/LabelAlreadyExistsError';
 //import { TodoAlreadyPendingError } from '../errors/TodoAlreadyPendingError';
 import { TodoReopenEvent } from '../events/TodoReopenEvent';
+import type { TodoUniquenessChecker } from '../services/TodoUniquenessChecker';
 
 export type TodoProps = {
     id: TodoId,
@@ -96,18 +97,23 @@ export class Todo {
   }
 
   // 3. Cambiar el título (Usando el Value Object)
-  public changeTitle(newTitle: TodoTitle): boolean {
+  public async changeTitle(newTitle: TodoTitle, checker: TodoUniquenessChecker): Promise<boolean> {
+    
+    // 1. Comparación rápida en memoria (Value Object)
+    if (this._title.equals(newTitle)) return false;
 
-    if(this._title.equals(newTitle)) return false;
-
+    // 2. Validación de Estado (Regla: No editar si está terminada)
     if (this._status === TodoCompletionStatus.DONE) {
       throw new TodoImmutableError("Intentó cambiar el título");
     }
 
+    // 3. Validación de Dominio Externa (Regla: Título Único)
+    // ⚠️ Aquí ocurre la magia: La entidad delega la validación al servicio
+    await checker.ensureUnique(newTitle);
+
+    // 4. Mutación del Estado
     this._title = newTitle;
-  
     return true;
-  
   }
 
   // 5. Cambiar la descripción
