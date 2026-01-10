@@ -6,7 +6,6 @@ import type { DomainEventTodo } from '../events/DomainEvent';
 // Importamos eventos
 import { TodoCompletedEvent } from '../events/TodoCompletedEvent';
 // Importamos errores
-import { TodoAlreadyCompletedError } from '../errors/TodoAlreadyCompletedError';
 import { TodoImmutableError } from '../errors/TodoImmutableError';
 import { LabelAlreadyExistsError } from '../errors/LabelAlreadyExistsError';
 //import { TodoAlreadyPendingError } from '../errors/TodoAlreadyPendingError';
@@ -71,14 +70,15 @@ export class Todo {
   // --- COMPORTAMIENTOS (Lógica de Negocio) ---
 
   // 1. Completar la tarea
-  public complete(date: Date): void {
+  public complete(date: Date): boolean {
     if (this._status === TodoCompletionStatus.DONE) {
-        throw new TodoAlreadyCompletedError(this.id);
+        return false;
     }
     this._status = TodoCompletionStatus.DONE;
 
     this.addDomainEvent(new TodoCompletedEvent(this.id, date));
 
+    return true;
   }
 
   // 2. Reabrir la tarea

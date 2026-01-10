@@ -11,6 +11,9 @@ import { TodoNotFoundError } from "../../errors/TodoNotFound";
 import type { Metrics } from "../../../../../shared/observability/Metrics";
 import type { Logger } from "../../../../../shared/observability/Logger";
 
+export type CompleteTodoResult = 
+  | { status: "completed" }
+  | { status: "already_completed" }; // Estado de idempotencia
 
 
 export class CompleteTodo {
@@ -26,12 +29,12 @@ export class CompleteTodo {
         this.date = date;
     }
 
-  async execute(input: CompleteTodoDTO, ctx: ActorContext): Promise<void> {
+  async execute(input: CompleteTodoDTO, ctx: ActorContext): Promise<CompleteTodoResult> {
     try {
       requirePermission(ctx, PERMISSIONS.TODO_UPDATE);
 
       //llamada del metodo transaction del UoW
-      await this.uow.transaction(async (tx) => {
+      return await this.uow.transaction(async (tx) => {
         const todoId = new TodoId(input.id);
         const todo = await tx.todoRepo.getById(todoId);
 
@@ -39,13 +42,30 @@ export class CompleteTodo {
           throw new TodoNotFoundError(input.id, "complete");
         }
 
-        todo.complete(this.date.now());
+        const wasCompleted = todo.complete(this.date.now());
+
+        if (!wasCompleted) {
+           this.metrics.increment("todo_complete_noop");
+           this.logger.info("El Todo ya estaba completado (no-op)", { 
+               todoId: input.id, 
+               user: ctx.userId 
+           });
+
+           // Retornamos directamente. 
+           // Al salir de la función sin lanzar error, la transacción se "comitea" vacía (o no hace nada), lo cual es seguro.
+           return { status: "already_completed" };
+        }
+
         await tx.todoRepo.save(todo);
 
         // ✅ después del save, sacas eventos (y limpias la mochila)
         const events = todo.pullDomainEvents();    
         await tx.eventBus.publish(events); // persistencia en outbox
 
+        this.metrics.increment("todo_complete_success");
+        this.logger.info("Todo completado exitosamente", { todoId: input.id });
+
+        return { status: "completed" };
       });
 
     } catch (error) {
