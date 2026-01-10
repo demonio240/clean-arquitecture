@@ -59,8 +59,6 @@ export class UpdateTodoContent {
       changed = changed || titleChanged;
 
       if (input.description !== undefined) {
-
-
         changed = todo.changeDescription(input.description) || changed;
       }
       

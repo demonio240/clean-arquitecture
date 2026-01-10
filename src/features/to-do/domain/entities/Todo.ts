@@ -135,7 +135,7 @@ export class Todo {
 
 
   // 6. Agregar etiqueta (Regla: No duplicados)
-  public addLabel(newLabel: Label): void {
+  public addLabel(newLabel: Label): boolean {
 
     if (this._status === TodoCompletionStatus.DONE) {
       throw new TodoImmutableError("Intentó agregar una etiqueta a una tarea completada");
@@ -143,12 +143,12 @@ export class Todo {
 
     const exists = this._labels.some(label => label.equals(newLabel));
     if (exists) {
-       throw new LabelAlreadyExistsError(newLabel.value);
+       return false;
        
     }
 
     this._labels.push(newLabel);
-    
+    return true;
   }
 
   // 3. MECANISMO PARA SACAR LOS EVENTOS

@@ -45,7 +45,20 @@ export class AddTodoLabel {
             const label =  Label.create(input.label, "default");
 
             // 4) Mutar dominio (si addLabel puede detectar duplicado, mejor)
-            todo.addLabel(label); 
+            const wasAdded = todo.addLabel(label); 
+
+            //  Manejo de NO-OP (Idempotencia)
+            if (!wasAdded) {
+                this.metrics.increment("todo_label_add_noop"); // Métrica específica
+                this.logger.info("Etiqueta duplicada (no-op)", {
+                    todoId: input.id,
+                    label: input.label,
+                    user: ctx.userId
+                });
+                
+                // Retornamos éxito (o estado específico) SIN tocar la base de datos
+                return { status: "already_exists" };
+            } 
 
             //persistir
             await this.repo.save(todo);
@@ -79,17 +92,6 @@ export class AddTodoLabel {
                     label: input.label, 
                     user: ctx.userId 
                 });
-            }
-
-            //Recordar usar swallow en los demas uses cases y analizar si aplican en los demas uses cases
-            if (appErr.telemetry?.swallow) {
-                this.logger.info("Etiqueta duplicada (no-op)", {
-                    todoId: input.id,
-                    label: input.label,
-                    user: ctx.userId,
-                    code: appErr.code,
-                });
-                return { status: "already_exists" };
             }
 
             throw appErr;
