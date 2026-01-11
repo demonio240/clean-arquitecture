@@ -72,9 +72,10 @@ export class ReopenTodo {
       })
 
     } catch (err) {
+
         const appErr = mapDomainError(err);
-        
         const outcome = appErr.telemetry?.outcome ?? "failure"; // not_found | forbidden | validation | failure...
+        
         this.metrics.increment(`todo_reopen_${outcome}`);
         
         if (outcome === "not_found" || outcome === "forbidden" || outcome === "validation") {

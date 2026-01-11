@@ -79,9 +79,10 @@ export class UpdateTodoContent {
       
       return { status: "updated", todo: tododto }
     } catch (err) {
-      const appErr = mapDomainError(err);
 
+      const appErr = mapDomainError(err);
       const outcome = appErr.telemetry?.outcome ?? "failure";
+      
       this.metrics.increment(`todo_update_content_${outcome}`);
 
       if (outcome === "not_found" || outcome === "forbidden" || outcome === "validation") {

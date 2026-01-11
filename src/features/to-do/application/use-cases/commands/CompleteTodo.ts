@@ -10,10 +10,12 @@ import type { Clock } from "../../../../../shared/time/SystemClock";
 import { TodoNotFoundError } from "../../errors/TodoNotFound";
 import type { Metrics } from "../../../../../shared/observability/Metrics";
 import type { Logger } from "../../../../../shared/observability/Logger";
+import type { TodoDTO } from "../../dto/TodoDTO";
+import { TodoMapper } from "../../mappers/TodoMapper";
 
 export type CompleteTodoResult = 
-  | { status: "completed" }
-  | { status: "already_completed" }; // Estado de idempotencia
+  | { status: "completed"; todo: TodoDTO }        
+  | { status: "already_completed"; todo: TodoDTO };
 
 
 export class CompleteTodo {
@@ -30,8 +32,11 @@ export class CompleteTodo {
     }
 
   async execute(input: CompleteTodoDTO, ctx: ActorContext): Promise<CompleteTodoResult> {
+    
+    this.logger.info("Intentando completar TODO", { todoId: input.id, user: ctx.userId });
+    requirePermission(ctx, PERMISSIONS.TODO_UPDATE);
+    
     try {
-      requirePermission(ctx, PERMISSIONS.TODO_UPDATE);
 
       //llamada del metodo transaction del UoW
       return await this.uow.transaction(async (tx) => {
@@ -44,6 +49,8 @@ export class CompleteTodo {
 
         const wasCompleted = todo.complete(this.date.now());
 
+        const todoDto = TodoMapper.toDTO(todo);
+
         if (!wasCompleted) {
            this.metrics.increment("todo_complete_noop");
            this.logger.info("El Todo ya estaba completado (no-op)", { 
@@ -53,7 +60,7 @@ export class CompleteTodo {
 
            // Retornamos directamente. 
            // Al salir de la función sin lanzar error, la transacción se "comitea" vacía (o no hace nada), lo cual es seguro.
-           return { status: "already_completed" };
+           return { status: "already_completed", todo: todoDto};
         }
 
         await tx.todoRepo.save(todo);
@@ -65,13 +72,14 @@ export class CompleteTodo {
         this.metrics.increment("todo_complete_success");
         this.logger.info("Todo completado exitosamente", { todoId: input.id });
 
-        return { status: "completed" };
+        return { status: "completed", todo: todoDto};
       });
 
     } catch (error) {
+      
       const appErr = mapDomainError(error);
-
       const outcome = appErr.telemetry?.outcome ?? "failure";
+      
       this.metrics.increment(`todo_complete_${outcome}`);
 
       if (outcome === "not_found" || outcome === "forbidden" || outcome === "validation") {

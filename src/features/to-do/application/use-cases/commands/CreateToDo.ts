@@ -66,9 +66,10 @@ export class CreateTodo {
       return { status: "created", todo: TodoMapper.toDTO(todo) };
 
     } catch (err) { 
+        
         const appErr = mapDomainError(err);
-
         const outcome = appErr.telemetry?.outcome ?? "failure";
+        
         this.metrics.increment(`todo_created_${outcome}`);
 
         if (outcome === "not_found" || outcome === "forbidden" || outcome === "validation") {
