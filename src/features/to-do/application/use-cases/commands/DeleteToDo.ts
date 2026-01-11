@@ -6,7 +6,12 @@ import type { Metrics } from "../../../../../shared/observability/Metrics";
 import type { TodoRepository } from "../../../domain/repositories/TodoRepository";
 import { TodoId } from "../../../domain/value-objects/TodoId";
 import { mapDomainError } from "../../errors/mapDomainError";
-import { TodoNotFoundError } from "../../errors/TodoNotFound";
+
+
+export type DeleteTodoResult = 
+  | { status: "deleted" }
+  | { status: "already_deleted" };
+
 
 export class DeleteToDo {
     private readonly repo: TodoRepository;
@@ -19,7 +24,7 @@ export class DeleteToDo {
         this.logger = logger;
     }
 
-    async execute (id: string, ctx: ActorContext): Promise<void> {
+    async execute (id: string, ctx: ActorContext): Promise<DeleteTodoResult> {
 
         this.logger.info("Intentando eliminar TODO", { todoId: id, user: ctx.userId });
         requirePermission(ctx, PERMISSIONS.TODO_DELETE);
@@ -30,7 +35,12 @@ export class DeleteToDo {
             const todo = await this.repo.getById(todoId);
 
             if (!todo) {
-                throw new TodoNotFoundError(id, "delete");  
+                // NO-OP: El objetivo "que no exista" ya está cumplido.
+                // No lanzamos error, devolvemos éxito.
+                this.metrics.increment("todo_delete_noop");
+                this.logger.info("DeleteToDo no-op: El Todo no existía (ya eliminado)", { todoId: id });
+                
+                return { status: "already_deleted" };
             }
 
             await this.repo.delete(todoId);
@@ -38,6 +48,7 @@ export class DeleteToDo {
             this.metrics.increment("todo_delete_success");
             this.logger.info("TODO eliminado exitosamente", { todoId: id, user: ctx.userId });
 
+            return { status: "deleted" };
         } catch (error) {
             const appErr = mapDomainError(error);
 
@@ -49,8 +60,6 @@ export class DeleteToDo {
             } else {
                 this.logger.error("Error eliminando TODO", appErr, { todoId: id, user: ctx.userId });
             }
-
-            if (appErr.telemetry?.swallow) return;
             
             throw appErr;
         }   
