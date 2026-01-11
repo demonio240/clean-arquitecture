@@ -5,12 +5,11 @@ import type { Logger } from "../../../../../shared/observability/Logger";
 import type { Metrics } from "../../../../../shared/observability/Metrics";
 import type { Clock } from "../../../../../shared/time/SystemClock";
 import type { UnitOfWork } from "../../../../../shared/uow/UnitOfWork";
-import type { Todo } from "../../../domain/entities/Todo";
-import type { TodoCompletionStatus } from "../../../domain/enums/TodoStatus";
 import { TodoId } from "../../../domain/value-objects/TodoId";
 import type { TodoDTO } from "../../dto/TodoDTO";
 import { mapDomainError } from "../../errors/mapDomainError";
 import { TodoNotFoundError } from "../../errors/TodoNotFound";
+import { TodoMapper } from "../../mappers/TodoMapper";
 import type { Tx } from "../../uow/Tx";
 
 export type ReopenTodoResult =
@@ -39,7 +38,7 @@ export class ReopenTodo {
   }
 
   async execute(id: string, ctx: ActorContext): Promise<ReopenTodoResult> {
-    
+
     this.logger.info("Intentando reabrir TODO", { todoId: id, user: ctx.userId }); 
     requirePermission(ctx, PERMISSIONS.TODO_UPDATE); 
 
@@ -54,11 +53,13 @@ export class ReopenTodo {
 
           const wasReopened = todo.reopen(this.date.now());
 
+          const todoDto = TodoMapper.toDTO(todo);
+
           if (!wasReopened) {
             this.metrics.increment("todo_reopen_noop");
             this.logger.info("El Todo ya estaba abierto (no-op)", { todoId: id, user: ctx.userId });
 
-            return { status: "already_open", todo: todoDTO(todo) };
+            return { status: "already_open", todo: todoDto };
           }
           
           await tx.todoRepo.save(todo);
@@ -69,7 +70,7 @@ export class ReopenTodo {
           this.metrics.increment("todo_reopen_success");
           this.logger.info("TODO reabierto exitosamente", { todoId: id, user: ctx.userId });
 
-          return { status: "reopened", todo: todoDTO(todo) };
+          return { status: "reopened", todo: todoDto };
       })
 
     } catch (err) {
@@ -88,15 +89,4 @@ export class ReopenTodo {
         throw appErr;
     }
   }
-}
-
-
-function todoDTO(todo: Todo): TodoDTO {
-  return {
-    id: todo.id.value,
-    title: todo.title,
-    description: todo.description,
-    status: todo.status as TodoCompletionStatus,
-    labels: todo.labels.map((l) => l.value),
-  };
 }
