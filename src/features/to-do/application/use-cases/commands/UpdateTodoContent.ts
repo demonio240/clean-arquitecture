@@ -11,6 +11,7 @@ import { TodoNotFoundError } from "../../errors/TodoNotFound";
 import type { Metrics } from "../../../../../shared/observability/Metrics";
 import type { Logger } from "../../../../../shared/observability/Logger";
 import type { TodoUniquenessChecker } from "../../../domain/services/TodoUniquenessChecker";
+import { TodoMapper } from "../../mappers/TodoMapper";
 
 export type UpdateTodoContentResult =
   | { status: "updated"; todo: TodoDTO }
@@ -62,13 +63,7 @@ export class UpdateTodoContent {
         changed = todo.changeDescription(input.description) || changed;
       }
       
-      const tododto: TodoDTO = {
-         id: todo.id.value,
-         title: todo.title,
-         description: todo.description,
-         status: todo.status,
-         labels: todo.labels.map((l) => l.value),
-       };
+      const tododto = TodoMapper.toDTO(todo);
 
       if (!changed) {
         this.metrics.increment("todo_update_content_no_update");

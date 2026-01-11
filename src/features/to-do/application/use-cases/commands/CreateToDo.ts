@@ -1,5 +1,4 @@
 import { Todo } from "../../../domain/entities/Todo";
-import type { TodoCompletionStatus } from "../../../domain/enums/TodoStatus";
 import type { TodoRepository } from "../../../domain/repositories/TodoRepository";
 import { Label } from "../../../domain/value-objects/Label";
 import { TodoId } from "../../../domain/value-objects/TodoId";
@@ -13,6 +12,7 @@ import { mapDomainError } from "../../errors/mapDomainError";
 import type { Metrics } from "../../../../../shared/observability/Metrics";
 import type { Logger } from '../../../../../shared/observability/Logger';
 import type { TodoUniquenessChecker } from "../../../domain/services/TodoUniquenessChecker";
+import { TodoMapper } from "../../mappers/TodoMapper";
 
 
 export type CreateTodoResult =
@@ -47,7 +47,7 @@ export class CreateTodo {
         this.logger.info("Idempotencia activada: Todo ya existía", { id: input.id });
         this.metrics.increment("todo_create_idempotency_hit");
 
-        return  { status: "todo_id_already_exists", todo: todoDTO(exists) };
+        return  { status: "todo_id_already_exists", todo: TodoMapper.toDTO(exists) };
       }
 
       const title = new TodoTitle(input.title);
@@ -63,7 +63,7 @@ export class CreateTodo {
 
       await this.repo.save(todo);
       this.metrics.increment("todo_created_success");
-      return { status: "created", todo: todoDTO(todo) };
+      return { status: "created", todo: TodoMapper.toDTO(todo) };
 
     } catch (err) { 
         const appErr = mapDomainError(err);
@@ -81,16 +81,3 @@ export class CreateTodo {
     }
   }
 }
-
-function todoDTO(todo: Todo): TodoDTO {
-
-  return {
-    id: todo.id.value,
-    title: todo.title,           
-    description: todo.description,
-    status: todo.status as TodoCompletionStatus,
-    labels: todo.labels.map((l) => l.value),
-  };
-
-}
-

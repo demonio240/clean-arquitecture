@@ -7,12 +7,14 @@ import type { TodoRepository } from "../../../domain/repositories/TodoRepository
 import { Label } from "../../../domain/value-objects/Label";
 import { TodoId } from "../../../domain/value-objects/TodoId";
 import type { AddTodoLabelDTO } from "../../dto/AddTodoLabelDTO";
+import type { TodoDTO } from "../../dto/TodoDTO";
 import { mapDomainError } from "../../errors/mapDomainError";
 import { TodoNotFoundError } from "../../errors/TodoNotFound";
+import { TodoMapper } from "../../mappers/TodoMapper";
 
 export type AddTodoLabelResult =
-  | { status: "added" }
-  | { status: "already_exists" };
+  | { status: "added"; todo: TodoDTO }          // Devuelve el estado nuevo
+  | { status: "already_exists"; todo: TodoDTO };
 
 export class AddTodoLabel {
     private readonly repo: TodoRepository;
@@ -47,6 +49,8 @@ export class AddTodoLabel {
             // 4) Mutar dominio (si addLabel puede detectar duplicado, mejor)
             const wasAdded = todo.addLabel(label); 
 
+            const todoDto = TodoMapper.toDTO(todo);
+
             //  Manejo de NO-OP (Idempotencia)
             if (!wasAdded) {
                 this.metrics.increment("todo_label_add_noop"); // Métrica específica
@@ -57,7 +61,7 @@ export class AddTodoLabel {
                 });
                 
                 // Retornamos éxito (o estado específico) SIN tocar la base de datos
-                return { status: "already_exists" };
+                return { status: "already_exists", todo: todoDto};
             } 
 
             //persistir
@@ -71,12 +75,13 @@ export class AddTodoLabel {
                 user: ctx.userId, 
             });
 
-            return { status: "added" };
+            return { status: "added", todo: todoDto};
 
         } catch (error) {
-            const appErr = mapDomainError(error);
 
+            const appErr = mapDomainError(error);
             const outcome = appErr.telemetry?.outcome ?? "failure";
+            
             this.metrics.increment(`todo_label_add_${outcome}`);
 
             if (outcome === "not_found" || outcome === "forbidden" || outcome === "validation") {

@@ -53,13 +53,11 @@ export class ReopenTodo {
 
           const wasReopened = todo.reopen(this.date.now());
 
-          const todoDto = TodoMapper.toDTO(todo);
-
           if (!wasReopened) {
             this.metrics.increment("todo_reopen_noop");
             this.logger.info("El Todo ya estaba abierto (no-op)", { todoId: id, user: ctx.userId });
 
-            return { status: "already_open", todo: todoDto };
+            return { status: "already_open", todo: TodoMapper.toDTO(todo) };
           }
           
           await tx.todoRepo.save(todo);
@@ -70,7 +68,7 @@ export class ReopenTodo {
           this.metrics.increment("todo_reopen_success");
           this.logger.info("TODO reabierto exitosamente", { todoId: id, user: ctx.userId });
 
-          return { status: "reopened", todo: todoDto };
+          return { status: "reopened", todo: TodoMapper.toDTO(todo) };
       })
 
     } catch (err) {
