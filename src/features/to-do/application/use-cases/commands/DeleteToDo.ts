@@ -30,15 +30,15 @@ export class DeleteToDo {
         requirePermission(ctx, PERMISSIONS.TODO_DELETE);
 
         try {
-            
             const todoId = new TodoId(id);
+
             const todo = await this.repo.getById(todoId);
 
             if (!todo) {
                 // NO-OP: El objetivo "que no exista" ya está cumplido.
                 // No lanzamos error, devolvemos éxito.
                 this.metrics.increment("todo_delete_noop");
-                this.logger.info("DeleteToDo no-op: El Todo no existía (ya eliminado)", { todoId: id });
+                this.logger.info("DeleteToDo no-op: El Todo no existía (ya eliminado)", { todoId: id, user: ctx.userId});
                 
                 return { status: "already_deleted" };
             }
@@ -50,9 +50,10 @@ export class DeleteToDo {
 
             return { status: "deleted" };
         } catch (error) {
-            const appErr = mapDomainError(error);
 
+            const appErr = mapDomainError(error);
             const outcome = appErr.telemetry?.outcome ?? "failure";
+            
             this.metrics.increment(`todo_delete_${outcome}`);
 
             if (outcome === "not_found" || outcome === "forbidden" || outcome === "validation") {
