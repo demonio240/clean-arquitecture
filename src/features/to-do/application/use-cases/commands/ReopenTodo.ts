@@ -5,15 +5,17 @@ import type { Logger } from "../../../../../shared/observability/Logger";
 import type { Metrics } from "../../../../../shared/observability/Metrics";
 import type { Clock } from "../../../../../shared/time/SystemClock";
 import type { UnitOfWork } from "../../../../../shared/uow/UnitOfWork";
+import type { Todo } from "../../../domain/entities/Todo";
+import type { TodoCompletionStatus } from "../../../domain/enums/TodoStatus";
 import { TodoId } from "../../../domain/value-objects/TodoId";
 import type { TodoDTO } from "../../dto/TodoDTO";
 import { mapDomainError } from "../../errors/mapDomainError";
 import { TodoNotFoundError } from "../../errors/TodoNotFound";
 import type { Tx } from "../../uow/Tx";
 
-export type UpdateTodoContentResult =
-  | { status: "updated"; todo: TodoDTO }
-  | { status: "no_update"; todo: TodoDTO };
+export type ReopenTodoResult =
+  | { status: "reopened"; todo: TodoDTO }
+  | { status: "already_open"; todo: TodoDTO }
 
 export class ReopenTodo {
     private readonly metrics: Metrics
@@ -36,13 +38,13 @@ export class ReopenTodo {
     this.date = date
   }
 
-  async execute(id: string, ctx: ActorContext): Promise<UpdateTodoContentResult> {
-    // 1) Authz fuera del try (así no mezclas outcomes)
+  async execute(id: string, ctx: ActorContext): Promise<ReopenTodoResult> {
+    
     this.logger.info("Intentando reabrir TODO", { todoId: id, user: ctx.userId }); 
-    requirePermission(ctx, PERMISSIONS.TODO_UPDATE); // ya lanza un appError
+    requirePermission(ctx, PERMISSIONS.TODO_UPDATE); 
 
     try {
-      const result = await this.uow.transaction<UpdateTodoContentResult>(async (tx): Promise<UpdateTodoContentResult> => {
+      return await this.uow.transaction(async (tx) => {
           const todoId = new TodoId(id);
           const todo = await tx.todoRepo.getById(todoId);
 
@@ -50,17 +52,13 @@ export class ReopenTodo {
             throw new TodoNotFoundError(id, "reopen");
           }
 
-          const changed = todo.reopen(this.date.now());
+          const wasReopened = todo.reopen(this.date.now());
 
-          if (!changed) {
-            this.metrics.increment("todo_reopen_no_update");
-            return { status: "no_update", todo: {
-              id: todo.id.value,
-              title: todo.title,
-              description: todo.description,
-              status: todo.status,
-              labels: todo.labels.map((l) => l.value),
-            } };
+          if (!wasReopened) {
+            this.metrics.increment("todo_reopen_noop");
+            this.logger.info("El Todo ya estaba abierto (no-op)", { todoId: id, user: ctx.userId });
+
+            return { status: "already_open", todo: todoDTO(todo) };
           }
           
           await tx.todoRepo.save(todo);
@@ -71,24 +69,15 @@ export class ReopenTodo {
           this.metrics.increment("todo_reopen_success");
           this.logger.info("TODO reabierto exitosamente", { todoId: id, user: ctx.userId });
 
-          return { status: "updated", todo: {
-            id: todo.id.value,
-            title: todo.title,
-            description: todo.description,
-            status: todo.status,
-            labels: todo.labels.map((l) => l.value),
-          } };
+          return { status: "reopened", todo: todoDTO(todo) };
       })
 
-      return result;
     } catch (err) {
         const appErr = mapDomainError(err);
         
-        // 2) Métrica por outcome (sin if instanceof aquí)
         const outcome = appErr.telemetry?.outcome ?? "failure"; // not_found | forbidden | validation | failure...
         this.metrics.increment(`todo_reopen_${outcome}`);
         
-        // 3) Log por severidad según outcome (evita "error" para not_found)
         if (outcome === "not_found" || outcome === "forbidden" || outcome === "validation") {
           
           this.logger.warn("No se pudo reabrir el TODO", { todoId: id, user: ctx.userId, code: appErr.code });
@@ -99,4 +88,15 @@ export class ReopenTodo {
         throw appErr;
     }
   }
+}
+
+
+function todoDTO(todo: Todo): TodoDTO {
+  return {
+    id: todo.id.value,
+    title: todo.title,
+    description: todo.description,
+    status: todo.status as TodoCompletionStatus,
+    labels: todo.labels.map((l) => l.value),
+  };
 }
