@@ -7,10 +7,10 @@ import type { Clock } from "../../../../../shared/time/SystemClock";
 import type { UnitOfWork } from "../../../../../shared/uow/UnitOfWork";
 import { TodoId } from "../../../domain/value-objects/TodoId";
 import type { TodoDTO } from "../../dto/TodoDTO";
-import { mapDomainError } from "../../errors/mapDomainError";
 import { TodoNotFoundError } from "../../errors/TodoNotFound";
 import { TodoMapper } from "../../mappers/TodoMapper";
 import type { Tx } from "../../uow/Tx";
+import { executeUseCase } from "../../UseCaseDecorator";
 
 export type ReopenTodoResult =
   | { status: "reopened"; todo: TodoDTO }
@@ -39,10 +39,10 @@ export class ReopenTodo {
 
   async execute(id: string, ctx: ActorContext): Promise<ReopenTodoResult> {
 
-    this.logger.info("Intentando reabrir TODO", { todoId: id, user: ctx.userId }); 
-    requirePermission(ctx, PERMISSIONS.TODO_UPDATE); 
+    return executeUseCase("todo_reopen", this.logger, this.metrics, ctx, { id }, async () => {  
+      this.logger.info("Intentando reabrir TODO", { todoId: id, user: ctx.userId }); 
+      requirePermission(ctx, PERMISSIONS.TODO_UPDATE); 
 
-    try {
       return await this.uow.transaction(async (tx) => {
           const todoId = new TodoId(id);
           const todo = await tx.todoRepo.getById(todoId);
@@ -71,21 +71,8 @@ export class ReopenTodo {
           return { status: "reopened", todo: TodoMapper.toDTO(todo) };
       })
 
-    } catch (err) {
-
-        const appErr = mapDomainError(err);
-        const outcome = appErr.telemetry?.outcome ?? "failure"; // not_found | forbidden | validation | failure...
-        
-        this.metrics.increment(`todo_reopen_${outcome}`);
-        
-        if (outcome === "not_found" || outcome === "forbidden" || outcome === "validation") {
-          
-          this.logger.warn("No se pudo reabrir el TODO", { todoId: id, user: ctx.userId, code: appErr.code });
-        } else {
-          this.logger.error("Error reabriendo TODO", appErr, { todoId: id, user: ctx.userId });
-        }
-      
-        throw appErr;
-    }
+    })
+    
   }
+  
 }
