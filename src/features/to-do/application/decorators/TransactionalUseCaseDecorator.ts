@@ -22,7 +22,7 @@ export class TransactionalUseCaseDecorator<I, O, TransactionContext> implements 
     // 1. Iniciamos la transacción
     return this.uow.transaction(async (tx) => {
       
-      // 2. CREAMOS el caso de uso "fresco" usando los repositorios de ESTA transacción
+      // 2. CREAMOS el caso de uso
       const useCase = this.useCaseFactory(tx);
 
       // 3. Ejecutamos la lógica

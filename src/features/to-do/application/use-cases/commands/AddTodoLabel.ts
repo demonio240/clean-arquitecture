@@ -1,105 +1,69 @@
 import type { ActorContext } from "../../../../../shared/authz/ActorContext";
 import { requirePermission } from "../../../../../shared/authz/guards";
 import { PERMISSIONS } from "../../../../../shared/authz/permissions";
-import type { Logger } from "../../../../../shared/observability/Logger";
-import type { Metrics } from "../../../../../shared/observability/Metrics";
 import type { TodoRepository } from "../../../domain/repositories/TodoRepository";
 import { Label } from "../../../domain/value-objects/Label";
 import { TodoId } from "../../../domain/value-objects/TodoId";
 import type { AddTodoLabelDTO } from "../../dto/AddTodoLabelDTO";
 import type { TodoDTO } from "../../dto/TodoDTO";
-import { mapDomainError } from "../../errors/mapDomainError";
 import { TodoNotFoundError } from "../../errors/TodoNotFound";
 import { TodoMapper } from "../../mappers/TodoMapper";
+import type { UseCase } from "../../UseCase";
+import type { DomainEventBus } from "../../../../../shared/events/DomainEventBus";
+import type { DomainEventTodo } from "../../../domain/events/DomainEvent";
+
 
 export type AddTodoLabelResult =
-  | { status: "added"; todo: TodoDTO }          // Devuelve el estado nuevo
+  | { status: "added"; todo: TodoDTO }        
   | { status: "already_exists"; todo: TodoDTO };
 
-export class AddTodoLabel {
-    private readonly repo: TodoRepository;
-    private readonly metrics: Metrics
-    private readonly logger: Logger;
+export class AddTodoLabel implements UseCase<AddTodoLabelDTO, AddTodoLabelResult> {
 
-    constructor(repo: TodoRepository, metrics: Metrics, logger: Logger ) {
+    private readonly repo: TodoRepository
+        // Agregamos EventBus para consistencia con los otros comandos
+    private readonly eventBus: DomainEventBus<DomainEventTodo> 
+    
+    constructor(
+        repo: TodoRepository,
+        // Agregamos EventBus para consistencia con los otros comandos
+        eventBus: DomainEventBus<DomainEventTodo> 
+    ) {
         this.repo = repo;
-        this.metrics = metrics;
-        this.logger = logger;
+        this.eventBus = eventBus;
     }
 
     async execute (input: AddTodoLabelDTO, ctx: ActorContext): Promise<AddTodoLabelResult> {
-        // 1) Validar permisos
-        this.logger.info("Verificando permisos para agregar etiqueta al TODO", { user: ctx.userId });
+        // 1. Validar permisos
         requirePermission(ctx, PERMISSIONS.TODO_UPDATE);    
           
-        this.logger.info("Permisos verificados exitosamente para agregar etiqueta al TODO", { user: ctx.userId });
-        
-        try {
-            // 2) Obtener el Todo
-            const todoId = new TodoId(input.id); 
-            const todo = await this.repo.getById(todoId);
+        const todoId = new TodoId(input.id); 
+        const todo = await this.repo.getById(todoId);
 
-            if (!todo) {
-                throw new TodoNotFoundError(input.id, "add_label");
-            }
-
-            // 3) Crear VO
-            const label =  Label.create(input.label, "default");
-
-            // 4) Mutar dominio (si addLabel puede detectar duplicado, mejor)
-            const wasAdded = todo.addLabel(label); 
-
-            const todoDto = TodoMapper.toDTO(todo);
-
-            //  Manejo de NO-OP (Idempotencia)
-            if (!wasAdded) {
-                this.metrics.increment("todo_label_add_noop"); // Métrica específica
-                this.logger.info("Etiqueta duplicada (no-op)", {
-                    todoId: input.id,
-                    label: input.label,
-                    user: ctx.userId
-                });
-                
-                // Retornamos éxito (o estado específico) SIN tocar la base de datos
-                return { status: "already_exists", todo: todoDto};
-            } 
-
-            //persistir
-            await this.repo.save(todo);
-
-            // observabilidad
-            this.metrics.increment("todo_label_add_success");
-            this.logger.info("Etiqueta agregada exitosamente al TODO", { 
-                todoId: input.id, 
-                label: label.value, 
-                user: ctx.userId, 
-            });
-
-            return { status: "added", todo: todoDto};
-
-        } catch (error) {
-
-            const appErr = mapDomainError(error);
-            const outcome = appErr.telemetry?.outcome ?? "failure";
-            
-            this.metrics.increment(`todo_label_add_${outcome}`);
-
-            if (outcome === "not_found" || outcome === "forbidden" || outcome === "validation") {
-                this.logger.warn("No se pudo agregar la etiqueta al TODO", { 
-                    todoId: input.id, 
-                    label: input.label, 
-                    user: ctx.userId, 
-                    code: appErr.code 
-                });
-            } else {
-                this.logger.error("Error agregando etiqueta al TODO", appErr, { 
-                    todoId: input.id, 
-                    label: input.label, 
-                    user: ctx.userId 
-                });
-            }
-
-            throw appErr;
+        if (!todo) {
+            throw new TodoNotFoundError(input.id, "add_label");
         }
+
+        // 2. Crear VO y Ejecutar Dominio
+        const label = Label.create(input.label, "default");
+        const wasAdded = todo.addLabel(label); 
+
+        const todoDto = TodoMapper.toDTO(todo);
+
+        // 3. Idempotencia
+        if (!wasAdded) {
+            // El decorador de observabilidad registrará el éxito de la operación (status 200)
+            return { status: "already_exists", todo: todoDto };
+        } 
+
+        // 4. Persistencia
+        await this.repo.save(todo);
+
+        // 5. Publicar Eventos (Si AddLabel genera eventos internos en Todo)
+        const events = todo.pullDomainEvents();
+        if (events.length > 0) {
+            await this.eventBus.publish(events);
+        }
+
+        return { status: "added", todo: todoDto };
     }
 }

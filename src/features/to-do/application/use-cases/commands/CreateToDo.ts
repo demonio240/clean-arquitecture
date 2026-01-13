@@ -8,77 +8,70 @@ import { requirePermission } from "../../../../../shared/authz/guards";
 import { PERMISSIONS } from "../../../../../shared/authz/permissions";
 import type { CreateTodoDTO } from "../../dto/CreateTodoDTO";
 import type { TodoDTO } from "../../dto/TodoDTO";
-import { mapDomainError } from "../../errors/mapDomainError";
-import type { Metrics } from "../../../../../shared/observability/Metrics";
-import type { Logger } from '../../../../../shared/observability/Logger';
 import type { TodoUniquenessChecker } from "../../../domain/services/TodoUniquenessChecker";
 import { TodoMapper } from "../../mappers/TodoMapper";
 
+// Imports de Arquitectura
+import type { UseCase } from "../../UseCase";
+import type { DomainEventBus } from "../../../../../shared/events/DomainEventBus";
+import type { DomainEventTodo } from "../../../domain/events/DomainEvent";
 
 export type CreateTodoResult =
   | { status: "created"; todo: TodoDTO }
   | { status: "todo_id_already_exists"; todo: TodoDTO };
 
-export class CreateTodo {
-  private readonly repo: TodoRepository;
-  private readonly uniquenessChecker: TodoUniquenessChecker;
-  private readonly metrics: Metrics;
-  private readonly logger: Logger; // Reemplazar con inyección de Logger si es necesario
+export class CreateTodo implements UseCase<CreateTodoDTO, CreateTodoResult> {
+  private readonly repo: TodoRepository
+  private readonly uniquenessChecker: TodoUniquenessChecker
+  // Agregamos el Bus para publicar eventos (ej: TodoCreated)
+  private readonly eventBus: DomainEventBus<DomainEventTodo> 
   
-
-  constructor(repo: TodoRepository, uniquenessChecker: TodoUniquenessChecker,metrics: Metrics, logger: Logger) {
-    this.logger = logger;
+  constructor(
+    repo: TodoRepository,
+    uniquenessChecker: TodoUniquenessChecker,
+    // Agregamos el Bus para publicar eventos (ej: TodoCreated)
+    eventBus: DomainEventBus<DomainEventTodo> 
+  ) {
     this.repo = repo;
     this.uniquenessChecker = uniquenessChecker;
-    this.metrics = metrics;
+    this.eventBus = eventBus;
   }
 
   async execute(input: CreateTodoDTO, ctx: ActorContext): Promise<CreateTodoResult> {
-
-    this.logger.info("Intentando crear TODO", { todoId: input.id, title: input.title });
+    // 1. Validar Permisos
     requirePermission(ctx, PERMISSIONS.TODO_CREATE);
 
-    try{
+    const id = new TodoId(input.id);
 
-      const id = new TodoId(input.id);
-
-      const exists = await this.repo.getById(id);
-      if (exists){ 
-        this.logger.info("Idempotencia activada: Todo ya existía", { id: input.id });
-        this.metrics.increment("todo_create_idempotency_hit");
-
-        return  { status: "todo_id_already_exists", todo: TodoMapper.toDTO(exists) };
-      }
-
-      const title = new TodoTitle(input.title);
-
-      await this.uniquenessChecker.ensureUnique(title);
-
-      const todo = Todo.create(id, title, input.description ?? "");
-
-      for (const raw of input.labels ?? []) {
-        const label = Label.create(raw, "default");
-        todo.addLabel(label);
-      }
-
-      await this.repo.save(todo);
-      this.metrics.increment("todo_created_success");
-      return { status: "created", todo: TodoMapper.toDTO(todo) };
-
-    } catch (err) { 
-        
-        const appErr = mapDomainError(err);
-        const outcome = appErr.telemetry?.outcome ?? "failure";
-        
-        this.metrics.increment(`todo_created_${outcome}`);
-
-        if (outcome === "not_found" || outcome === "forbidden" || outcome === "validation") {
-          this.logger.warn("No se pudo crear el TODO", { title: input.title, code: appErr.code });
-        } else {
-          this.logger.error("Error creando TODO", appErr, { input });
-        }
-
-        throw appErr;
+    // 2. Validación de Idempotencia (Regla de Negocio)
+    const exists = await this.repo.getById(id);
+    if (exists) {
+      // El decorador de observabilidad marcará esto como éxito (no lanza error)
+      return { status: "todo_id_already_exists", todo: TodoMapper.toDTO(exists) };
     }
+
+    // 3. Validaciones de Dominio Complejas (Servicio de Dominio)
+    const title = new TodoTitle(input.title);
+    await this.uniquenessChecker.ensureUnique(title);
+
+    // 4. Creación de la Entidad
+    const todo = Todo.create(id, title, input.description ?? "");
+
+    // 5. Lógica adicional (Labels)
+    for (const raw of input.labels ?? []) {
+      const label = Label.create(raw, "default");
+      todo.addLabel(label);
+    }
+
+    // 6. Persistencia
+    await this.repo.save(todo);
+
+    // 7. Publicación de Eventos
+    const events = todo.pullDomainEvents();
+    if (events.length > 0) {
+        await this.eventBus.publish(events);
+    }
+
+    return { status: "created", todo: TodoMapper.toDTO(todo) };
   }
 }

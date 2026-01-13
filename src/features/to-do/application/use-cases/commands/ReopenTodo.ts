@@ -13,7 +13,7 @@ import type { DomainEventTodo } from "../../../domain/events/DomainEvent";
 
 export type ReopenTodoResult =
   | { status: "reopened"; todo: TodoDTO }
-  | { status: "already_open"; todo: TodoDTO }
+  | { status: "already_open"; todo: TodoDTO };
 
 export type ReopenTodoInput = { id: string };
 
