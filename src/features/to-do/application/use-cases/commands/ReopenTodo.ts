@@ -1,78 +1,63 @@
 import type { ActorContext } from "../../../../../shared/authz/ActorContext";
 import { requirePermission } from "../../../../../shared/authz/guards";
 import { PERMISSIONS } from "../../../../../shared/authz/permissions";
-import type { Logger } from "../../../../../shared/observability/Logger";
-import type { Metrics } from "../../../../../shared/observability/Metrics";
 import type { Clock } from "../../../../../shared/time/SystemClock";
-import type { UnitOfWork } from "../../../../../shared/uow/UnitOfWork";
 import { TodoId } from "../../../domain/value-objects/TodoId";
 import type { TodoDTO } from "../../dto/TodoDTO";
 import { TodoNotFoundError } from "../../errors/TodoNotFound";
 import { TodoMapper } from "../../mappers/TodoMapper";
-import type { Tx } from "../../uow/Tx";
-import { executeUseCase } from "../../UseCaseDecorator";
+import type { TodoRepository } from "../../../domain/repositories/TodoRepository"; // Nuevo import
+import type { UseCase } from "../UseCase";
+import type { DomainEventBus } from "../../../../../shared/events/DomainEventBus";
+import type { DomainEventTodo } from "../../../domain/events/DomainEvent";
 
 export type ReopenTodoResult =
   | { status: "reopened"; todo: TodoDTO }
   | { status: "already_open"; todo: TodoDTO }
 
-export class ReopenTodo {
-    private readonly metrics: Metrics
-    private readonly logger: Logger
-    private readonly uow: UnitOfWork<Tx>;
-    private readonly date: Clock
+export type ReopenTodoInput = { id: string };
 
-  constructor(
-
-    metrics: Metrics,
-    logger: Logger,
-    uow: UnitOfWork<Tx>,
-    date: Clock
-    
-  ) {
-    
-    this.metrics = metrics;
-    this.logger = logger;
-    this.uow = uow;
-    this.date = date
-  }
-
-  async execute(id: string, ctx: ActorContext): Promise<ReopenTodoResult> {
-
-    return executeUseCase("todo_reopen", this.logger, this.metrics, ctx, { id }, async () => {  
-      this.logger.info("Intentando reabrir TODO", { todoId: id, user: ctx.userId }); 
-      requirePermission(ctx, PERMISSIONS.TODO_UPDATE); 
-
-      return await this.uow.transaction(async (tx) => {
-          const todoId = new TodoId(id);
-          const todo = await tx.todoRepo.getById(todoId);
-
-          if (!todo) {
-            throw new TodoNotFoundError(id, "reopen");
-          }
-
-          const wasReopened = todo.reopen(this.date.now());
-
-          if (!wasReopened) {
-            this.metrics.increment("todo_reopen_noop");
-            this.logger.info("El Todo ya estaba abierto (no-op)", { todoId: id, user: ctx.userId });
-
-            return { status: "already_open", todo: TodoMapper.toDTO(todo) };
-          }
-          
-          await tx.todoRepo.save(todo);
-
-          const events = todo.pullDomainEvents();
-          await tx.eventBus.publish(events);
-          
-          this.metrics.increment("todo_reopen_success");
-          this.logger.info("TODO reabierto exitosamente", { todoId: id, user: ctx.userId });
-
-          return { status: "reopened", todo: TodoMapper.toDTO(todo) };
-      })
-
-    })
-    
-  }
+export class ReopenTodo implements UseCase<ReopenTodoInput, ReopenTodoResult> {
   
+  private readonly todoRepo: TodoRepository
+  private readonly eventBus: DomainEventBus<DomainEventTodo>
+  private readonly date: Clock
+
+  // AHORA DEPENDE DE LOS REPOS, NO DEL UOW
+  constructor(
+    todoRepo: TodoRepository,
+    eventBus: DomainEventBus<DomainEventTodo>,
+    date: Clock
+  ) {
+    this.todoRepo = todoRepo;
+    this.eventBus = eventBus;
+    this.date = date;
+  }
+
+  async execute(input: ReopenTodoInput, ctx: ActorContext): Promise<ReopenTodoResult> {
+    const { id } = input;
+
+    requirePermission(ctx, PERMISSIONS.TODO_UPDATE);
+
+    // Lógica plana y directa gracias al decorador transaccional
+    const todoId = new TodoId(id);
+    const todo = await this.todoRepo.getById(todoId);
+
+    if (!todo) {
+      throw new TodoNotFoundError(id, "reopen");
+    }
+
+    const wasReopened = todo.reopen(this.date.now());
+
+    if (!wasReopened) {
+       return { status: "already_open", todo: TodoMapper.toDTO(todo) };
+    }
+    
+    await this.todoRepo.save(todo);
+
+    const events = todo.pullDomainEvents();
+    await this.eventBus.publish(events);
+
+    return { status: "reopened", todo: TodoMapper.toDTO(todo) };
+  }
 }
