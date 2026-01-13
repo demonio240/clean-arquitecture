@@ -1,6 +1,6 @@
 // shared/application/UseCase.ts
 
-import type { ActorContext } from "../../../../shared/authz/ActorContext";
+import type { ActorContext } from "../../../shared/authz/ActorContext";
 
 
 // Definimos que TODO caso de uso recibe un Input (I) y devuelve un Output (O)

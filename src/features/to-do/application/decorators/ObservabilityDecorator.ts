@@ -2,7 +2,7 @@ import type { ActorContext } from "../../../../shared/authz/ActorContext";
 import type { AppError } from "../../../../shared/errors/AppError";
 import type { Logger } from "../../../../shared/observability/Logger";
 import type { Metrics } from "../../../../shared/observability/Metrics";
-import type { UseCase } from "./UseCase";
+import type { UseCase } from "../UseCase";
 
 
 // Definimos el tipo para la función que sabe convertir errores

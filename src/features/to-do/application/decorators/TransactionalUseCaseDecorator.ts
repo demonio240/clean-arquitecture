@@ -1,6 +1,6 @@
 import type { ActorContext } from "../../../../shared/authz/ActorContext";
 import type { UnitOfWork } from "../../../../shared/uow/UnitOfWork";
-import type { UseCase } from "./UseCase";
+import type { UseCase } from "../UseCase";
 
 
 // Definimos una "Fábrica" que sabe crear el caso de uso a partir de una Transacción (T)

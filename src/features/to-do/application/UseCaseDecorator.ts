@@ -3,6 +3,7 @@ import type { Logger } from "../../../shared/observability/Logger";
 import type { Metrics } from "../../../shared/observability/Metrics";
 import { mapDomainError } from "./errors/mapDomainError";
 
+// POSIBLEMENTE ELIMINARE ESTE ARCHIVO
 
 export async function executeUseCase<T>(
     operationName: string,

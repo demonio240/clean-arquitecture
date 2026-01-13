@@ -7,7 +7,7 @@ import type { TodoDTO } from "../../dto/TodoDTO";
 import { TodoNotFoundError } from "../../errors/TodoNotFound";
 import { TodoMapper } from "../../mappers/TodoMapper";
 import type { TodoRepository } from "../../../domain/repositories/TodoRepository"; // Nuevo import
-import type { UseCase } from "../UseCase";
+import type { UseCase } from "../../UseCase";
 import type { DomainEventBus } from "../../../../../shared/events/DomainEventBus";
 import type { DomainEventTodo } from "../../../domain/events/DomainEvent";
 
