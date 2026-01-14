@@ -14,28 +14,33 @@ import { TodoMapper } from "../../mappers/TodoMapper";
 import type { UseCase } from "../../UseCase";
 import type { DomainEventBus } from "../../../../../shared/events/DomainEventBus";
 import type { DomainEventTodo } from "../../../domain/events/DomainEvent";
+import { BaseUseCase } from "../../../../../shared/application/BaseUseCase";
+import { failure, success, type Result } from "../../../../../shared/core/Result";
 
-export type UpdateTodoContentResult =
+type UpdateTodoErrors = TodoNotFoundError | Error;
+
+export type UpdateTodoResponse =
   | { status: "updated"; todo: TodoDTO }
   | { status: "no_update"; todo: TodoDTO };
 
-export class UpdateTodoContent implements UseCase<UpdateTodoContentInput, UpdateTodoContentResult> {
+export class UpdateTodoContent extends BaseUseCase<DomainEventTodo> implements UseCase<UpdateTodoContentInput, Result<UpdateTodoResponse, UpdateTodoErrors>> {
   
   private readonly repo: TodoRepository
   private readonly uniquenessChecker: TodoUniquenessChecker
-  private readonly eventBus: DomainEventBus<DomainEventTodo>
+  readonly eventBus: DomainEventBus<DomainEventTodo>
 
   constructor(
     repo: TodoRepository,
     uniquenessChecker: TodoUniquenessChecker,
     eventBus: DomainEventBus<DomainEventTodo>
   ) {
+    super(eventBus)
     this.repo = repo;
     this.uniquenessChecker = uniquenessChecker;
     this.eventBus = eventBus;
   }
 
-  async execute(input: UpdateTodoContentInput, ctx: ActorContext): Promise<UpdateTodoContentResult> {
+  async execute(input: UpdateTodoContentInput, ctx: ActorContext): Promise<Result<UpdateTodoResponse, UpdateTodoErrors>> {
     // 1. Validar Permisos
     requirePermission(ctx, PERMISSIONS.TODO_UPDATE);
 
@@ -43,7 +48,7 @@ export class UpdateTodoContent implements UseCase<UpdateTodoContentInput, Update
     const todo = await this.repo.getById(id);
 
     if (!todo) {
-        throw new TodoNotFoundError(input.id, "update_content");
+        return failure(new TodoNotFoundError(input.id, "update_content"));
     }
 
     let changed = false;
@@ -66,7 +71,7 @@ export class UpdateTodoContent implements UseCase<UpdateTodoContentInput, Update
     // 3. Idempotencia / No-Op
     if (!changed) {
       // El decorador registrará éxito, pero nosotros indicamos que no hubo cambios
-      return { status: "no_update", todo: todoDto };
+      return success({ status: "no_update", todo: todoDto });
     }
 
     // 4. Persistencia
@@ -79,6 +84,8 @@ export class UpdateTodoContent implements UseCase<UpdateTodoContentInput, Update
         await this.eventBus.publish(events);
     }
     
-    return { status: "updated", todo: todoDto }
+    return success({ status: "updated", todo: todoDto });
   }
 }
+
+

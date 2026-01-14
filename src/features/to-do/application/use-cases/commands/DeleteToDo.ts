@@ -1,23 +1,26 @@
 import type { ActorContext } from "../../../../../shared/authz/ActorContext";
 import { requirePermission } from "../../../../../shared/authz/guards";
 import { PERMISSIONS } from "../../../../../shared/authz/permissions";
+import { success, type Result } from "../../../../../shared/core/Result";
 import type { TodoRepository } from "../../../domain/repositories/TodoRepository";
 import { TodoId } from "../../../domain/value-objects/TodoId";
+import type { TodoNotFoundError } from "../../errors/TodoNotFound";
 
 // Imports de Arquitectura
 import type { UseCase } from "../../UseCase";
 //import type { DomainEventBus } from "../../../../../shared/events/DomainEventBus";
 //import type { DomainEventTodo } from "../../../domain/events/DomainEvent";
 
+type DeleteTodoErrors = TodoNotFoundError | Error;
 
 // 1. Definimos el Input (necesario para el genérico UseCase)
 export type DeleteTodoInput = { id: string };
 
-export type DeleteTodoResult = 
+export type DeleteTodoResponse = 
   | { status: "deleted" }
   | { status: "already_deleted" };
 
-export class DeleteTodo implements UseCase<DeleteTodoInput, DeleteTodoResult> {
+export class DeleteTodo  implements UseCase<DeleteTodoInput, Result<DeleteTodoResponse, DeleteTodoErrors>> {
     private readonly repo: TodoRepository
     // Inyectamos el bus por consistencia, aunque en este caso específico 
     // tu lógica original no publicaba eventos al borrar.
@@ -33,7 +36,7 @@ export class DeleteTodo implements UseCase<DeleteTodoInput, DeleteTodoResult> {
         //this.eventBus = eventBus;
     }
 
-    async execute (input: DeleteTodoInput, ctx: ActorContext): Promise<DeleteTodoResult> {
+    async execute (input: DeleteTodoInput, ctx: ActorContext): Promise<Result<DeleteTodoResponse, DeleteTodoErrors>> {
         // 1. Validar Permisos
         requirePermission(ctx, PERMISSIONS.TODO_DELETE);
 
@@ -46,7 +49,7 @@ export class DeleteTodo implements UseCase<DeleteTodoInput, DeleteTodoResult> {
 
         if (!todo) {
             // El decorador de observabilidad registrará esto como éxito
-            return { status: "already_deleted" };
+            return success({ status: "already_deleted", success: undefined });
         }
 
         // 3. Eliminar
@@ -55,6 +58,6 @@ export class DeleteTodo implements UseCase<DeleteTodoInput, DeleteTodoResult> {
         // Si tuvieras un evento "TodoDeleted", aquí harías:
         // this.eventBus.publish([new TodoDeletedEvent(todoId)]);
         
-        return { status: "deleted" };
+        return success({ status: "deleted", success: undefined });
     }
 }

@@ -15,16 +15,21 @@ import { TodoMapper } from "../../mappers/TodoMapper";
 import type { UseCase } from "../../UseCase";
 import type { DomainEventBus } from "../../../../../shared/events/DomainEventBus";
 import type { DomainEventTodo } from "../../../domain/events/DomainEvent";
+import { BaseUseCase } from "../../../../../shared/application/BaseUseCase";
+import type { TodoNotFoundError } from "../../errors/TodoNotFound";
+import { success, type Result } from "../../../../../shared/core/Result";
 
-export type CreateTodoResult =
+type CreateTodoErrors = TodoNotFoundError | Error
+
+export type CreateTodoResponse =
   | { status: "created"; todo: TodoDTO }
   | { status: "todo_id_already_exists"; todo: TodoDTO };
 
-export class CreateTodo implements UseCase<CreateTodoDTO, CreateTodoResult> {
+export class CreateTodo extends BaseUseCase<DomainEventTodo> implements UseCase<CreateTodoDTO, Result<CreateTodoResponse, CreateTodoErrors>> {
   private readonly repo: TodoRepository
   private readonly uniquenessChecker: TodoUniquenessChecker
   // Agregamos el Bus para publicar eventos (ej: TodoCreated)
-  private readonly eventBus: DomainEventBus<DomainEventTodo> 
+  readonly eventBus: DomainEventBus<DomainEventTodo> 
   
   constructor(
     repo: TodoRepository,
@@ -32,12 +37,13 @@ export class CreateTodo implements UseCase<CreateTodoDTO, CreateTodoResult> {
     // Agregamos el Bus para publicar eventos (ej: TodoCreated)
     eventBus: DomainEventBus<DomainEventTodo> 
   ) {
+    super(eventBus)
     this.repo = repo;
     this.uniquenessChecker = uniquenessChecker;
     this.eventBus = eventBus;
   }
 
-  async execute(input: CreateTodoDTO, ctx: ActorContext): Promise<CreateTodoResult> {
+  async execute(input: CreateTodoDTO, ctx: ActorContext): Promise<Result<CreateTodoResponse, CreateTodoErrors>> {
     // 1. Validar Permisos
     requirePermission(ctx, PERMISSIONS.TODO_CREATE);
 
@@ -47,7 +53,7 @@ export class CreateTodo implements UseCase<CreateTodoDTO, CreateTodoResult> {
     const exists = await this.repo.getById(id);
     if (exists) {
       // El decorador de observabilidad marcará esto como éxito (no lanza error)
-      return { status: "todo_id_already_exists", todo: TodoMapper.toDTO(exists) };
+      return success({ status: "todo_id_already_exists", todo: TodoMapper.toDTO(exists) });
     }
 
     // 3. Validaciones de Dominio Complejas (Servicio de Dominio)
@@ -72,6 +78,6 @@ export class CreateTodo implements UseCase<CreateTodoDTO, CreateTodoResult> {
         await this.eventBus.publish(events);
     }
 
-    return { status: "created", todo: TodoMapper.toDTO(todo) };
+    return success({ status: "created", todo: TodoMapper.toDTO(todo) });
   }
 }

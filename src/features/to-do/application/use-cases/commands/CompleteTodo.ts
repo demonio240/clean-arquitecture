@@ -13,15 +13,18 @@ import type { UseCase } from "../../UseCase";
 import type { TodoRepository } from "../../../domain/repositories/TodoRepository";
 import type { DomainEventBus } from "../../../../../shared/events/DomainEventBus";
 import type { DomainEventTodo } from "../../../domain/events/DomainEvent";
+import { BaseUseCase } from "../../../../../shared/application/BaseUseCase";
+import { failure, success, type Result } from "../../../../../shared/core/Result";
 
+type CompleteTodoErrors = TodoNotFoundError | Error;
 
-export type CompleteTodoResult = 
+export type CompleteTodoResponse = 
   | { status: "completed"; todo: TodoDTO }        
   | { status: "already_completed"; todo: TodoDTO };
 
-export class CompleteTodo implements UseCase<CompleteTodoDTO, CompleteTodoResult> {
+export class CompleteTodo extends BaseUseCase<DomainEventTodo> implements UseCase<CompleteTodoDTO, Result<CompleteTodoResponse, CompleteTodoErrors>> {
     private readonly todoRepo: TodoRepository
-    private readonly eventBus: DomainEventBus<DomainEventTodo>
+    readonly eventBus: DomainEventBus<DomainEventTodo>
     private readonly date: Clock
     
     // Constructor limpio: Solo dependencias de dominio
@@ -30,12 +33,13 @@ export class CompleteTodo implements UseCase<CompleteTodoDTO, CompleteTodoResult
         eventBus: DomainEventBus<DomainEventTodo>,
         date: Clock
     ) {
+        super(eventBus)
         this.todoRepo = todoRepo;
         this.eventBus = eventBus;
         this.date = date;
     }
 
-    async execute(input: CompleteTodoDTO, ctx: ActorContext): Promise<CompleteTodoResult> {
+    async execute(input: CompleteTodoDTO, ctx: ActorContext): Promise<Result<CompleteTodoResponse, CompleteTodoErrors>> {
         // 1. Validar Permisos
         requirePermission(ctx, PERMISSIONS.TODO_UPDATE);
         
@@ -44,7 +48,7 @@ export class CompleteTodo implements UseCase<CompleteTodoDTO, CompleteTodoResult
         const todo = await this.todoRepo.getById(todoId);
 
         if (!todo) {
-          throw new TodoNotFoundError(input.id, "complete");
+          return failure(new TodoNotFoundError(input.id, "complete"));
         }
 
         const wasCompleted = todo.complete(this.date.now());
@@ -53,16 +57,15 @@ export class CompleteTodo implements UseCase<CompleteTodoDTO, CompleteTodoResult
         // Idempotencia: Si ya estaba completado, retornamos sin guardar ni publicar eventos
         if (!wasCompleted) {
            // No necesitamos loguear "no-op" aquí, el decorador de observabilidad registrará el éxito.
-           return { status: "already_completed", todo: todoDto };
+           return success({ status: "already_completed", todo: todoDto });
         }
 
         // 3. Persistencia
         await this.todoRepo.save(todo);
 
         // 4. Publicar Eventos
-        const events = todo.pullDomainEvents();    
-        await this.eventBus.publish(events);
+        await this.publishEvents(todo);
 
-        return { status: "completed", todo: todoDto };
+        return success({ status: "completed", todo: todoDto});
     }
 }

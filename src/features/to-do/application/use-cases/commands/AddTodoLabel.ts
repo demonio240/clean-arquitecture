@@ -11,28 +11,32 @@ import { TodoMapper } from "../../mappers/TodoMapper";
 import type { UseCase } from "../../UseCase";
 import type { DomainEventBus } from "../../../../../shared/events/DomainEventBus";
 import type { DomainEventTodo } from "../../../domain/events/DomainEvent";
+import { BaseUseCase } from "../../../../../shared/application/BaseUseCase";
+import { failure, success, type Result } from "../../../../../shared/core/Result";
 
+type AddLabelTodoErrors = TodoNotFoundError | Error;
 
-export type AddTodoLabelResult =
+export type AddLabelTodoResponse =
   | { status: "added"; todo: TodoDTO }        
   | { status: "already_exists"; todo: TodoDTO };
 
-export class AddTodoLabel implements UseCase<AddTodoLabelDTO, AddTodoLabelResult> {
+export class AddTodoLabel extends BaseUseCase<DomainEventTodo> implements UseCase<AddTodoLabelDTO, Result<AddLabelTodoResponse, AddLabelTodoErrors>> {
 
     private readonly repo: TodoRepository
         // Agregamos EventBus para consistencia con los otros comandos
-    private readonly eventBus: DomainEventBus<DomainEventTodo> 
+    readonly eventBus: DomainEventBus<DomainEventTodo> 
     
     constructor(
         repo: TodoRepository,
         // Agregamos EventBus para consistencia con los otros comandos
         eventBus: DomainEventBus<DomainEventTodo> 
     ) {
+        super(eventBus)
         this.repo = repo;
         this.eventBus = eventBus;
     }
 
-    async execute (input: AddTodoLabelDTO, ctx: ActorContext): Promise<AddTodoLabelResult> {
+    async execute (input: AddTodoLabelDTO, ctx: ActorContext): Promise<Result<AddLabelTodoResponse, AddLabelTodoErrors>> {
         // 1. Validar permisos
         requirePermission(ctx, PERMISSIONS.TODO_UPDATE);    
           
@@ -40,7 +44,8 @@ export class AddTodoLabel implements UseCase<AddTodoLabelDTO, AddTodoLabelResult
         const todo = await this.repo.getById(todoId);
 
         if (!todo) {
-            throw new TodoNotFoundError(input.id, "add_label");
+            return failure(new TodoNotFoundError(input.id, "reopen"));
+            
         }
 
         // 2. Crear VO y Ejecutar Dominio
@@ -52,7 +57,7 @@ export class AddTodoLabel implements UseCase<AddTodoLabelDTO, AddTodoLabelResult
         // 3. Idempotencia
         if (!wasAdded) {
             // El decorador de observabilidad registrará el éxito de la operación (status 200)
-            return { status: "already_exists", todo: todoDto };
+            return success({ status: "already_exists", todo: todoDto });
         } 
 
         // 4. Persistencia
@@ -64,6 +69,6 @@ export class AddTodoLabel implements UseCase<AddTodoLabelDTO, AddTodoLabelResult
             await this.eventBus.publish(events);
         }
 
-        return { status: "added", todo: todoDto };
+        return success({ status: "added", todo: todoDto });
     }
 }
