@@ -1,20 +1,16 @@
 import { TodoId } from "../../../domain/value-objects/TodoId";
-import type { ActorContext } from "../../../../../shared/authz/ActorContext";
-import { requirePermission } from "../../../../../shared/authz/guards";
-import { PERMISSIONS } from "../../../../../shared/authz/permissions";
 import type { CompleteTodoDTO } from "../../dto/CompleteTodoDTO";
-import type { Clock } from "../../../../../shared/time/SystemClock";
 import { TodoNotFoundError } from "../../errors/TodoNotFound";
 import type { TodoDTO } from "../../dto/TodoDTO";
 import { TodoMapper } from "../../mappers/TodoMapper";
 
-// Nuevos Imports de Arquitectura
+// Imports de Arquitectura y Dominio
 import type { UseCase } from "../../UseCase";
-import type { TodoRepository } from "../../../domain/repositories/TodoRepository";
-import type { DomainEventBus } from "../../../../../shared/events/DomainEventBus";
 import type { DomainEventTodo } from "../../../domain/events/DomainEvent";
 import { BaseUseCase } from "../../../../../shared/application/BaseUseCase";
 import { failure, success, type Result } from "../../../../../shared/core/Result";
+import type { Todo } from "../../../domain/entities/Todo";
+import type { TodoDependencies } from "../../TodoDependencies";
 
 type CompleteTodoErrors = TodoNotFoundError | Error;
 
@@ -22,48 +18,48 @@ export type CompleteTodoResponse =
   | { status: "completed"; todo: TodoDTO }        
   | { status: "already_completed"; todo: TodoDTO };
 
-export class CompleteTodo extends BaseUseCase<DomainEventTodo> implements UseCase<CompleteTodoDTO, Result<CompleteTodoResponse, CompleteTodoErrors>> {
-    private readonly todoRepo: TodoRepository
-    readonly eventBus: DomainEventBus<DomainEventTodo>
-    private readonly date: Clock
+// Extendemos BaseUseCase<Evento, Entidad>
+export class CompleteTodo extends BaseUseCase<DomainEventTodo, Todo> implements UseCase<CompleteTodoDTO, Result<CompleteTodoResponse, CompleteTodoErrors>> {
     
-    // Constructor limpio: Solo dependencias de dominio
-    constructor(
-        todoRepo: TodoRepository,
-        eventBus: DomainEventBus<DomainEventTodo>,
-        date: Clock
-    ) {
-        super(eventBus)
-        this.todoRepo = todoRepo;
-        this.eventBus = eventBus;
-        this.date = date;
+    private readonly todoRepo: TodoDependencies["todoRepo"];
+    private readonly date: TodoDependencies["date"];
+    
+    // Constructor limpio: Dependencias agrupadas
+    constructor(deps: TodoDependencies) {
+        super(deps.eventBus);
+        this.todoRepo = deps.todoRepo;
+        this.date = deps.date;
     }
 
-    async execute(input: CompleteTodoDTO, ctx: ActorContext): Promise<Result<CompleteTodoResponse, CompleteTodoErrors>> {
-        // 1. Validar Permisos
-        requirePermission(ctx, PERMISSIONS.TODO_UPDATE);
+    async execute(input: CompleteTodoDTO): Promise<Result<CompleteTodoResponse, CompleteTodoErrors>> {
+        // 1. Validar Permisos: ELIMINADO (Lo maneja el PermissionDecorator)
         
-        // 2. Lógica de Negocio (Sin UnitOfWork, sin logs, sin try/catch)
-        const todoId = new TodoId(input.id);
-        const todo = await this.todoRepo.getById(todoId);
+        // 2. BUSCAR AGREGADO (Usando getAggregate)
+        const result = await this.getAggregate(
+            input.id,
+            this.todoRepo,
+            (rawId) => new TodoId(rawId),
+            // Pasamos el contexto específico ("complete") al error
+            (missingId) => new TodoNotFoundError(missingId, "complete") 
+        );
 
-        if (!todo) {
-          return failure(new TodoNotFoundError(input.id, "complete"));
+        if (!result.isSuccess) {
+            return failure(result.error);
         }
 
+        const todo = result.value;
+
+        // 3. Lógica de Negocio
         const wasCompleted = todo.complete(this.date.now());
         const todoDto = TodoMapper.toDTO(todo);
 
-        // Idempotencia: Si ya estaba completado, retornamos sin guardar ni publicar eventos
+        // 4. Idempotencia: Si ya estaba completado, retornamos éxito sin efectos secundarios
         if (!wasCompleted) {
-           // No necesitamos loguear "no-op" aquí, el decorador de observabilidad registrará el éxito.
            return success({ status: "already_completed", todo: todoDto });
         }
 
-        // 3. Persistencia
+        // 5. Persistencia y Eventos
         await this.todoRepo.save(todo);
-
-        // 4. Publicar Eventos
         await this.publishEvents(todo);
 
         return success({ status: "completed", todo: todoDto});

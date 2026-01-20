@@ -1,9 +1,5 @@
-import type { TodoRepository } from "../../../domain/repositories/TodoRepository"
 import { TodoId } from "../../../domain/value-objects/TodoId";
 import { TodoTitle } from "../../../domain/value-objects/TodoTitle";
-import type { ActorContext } from "../../../../../shared/authz/ActorContext";
-import { requirePermission } from "../../../../../shared/authz/guards";
-import { PERMISSIONS } from "../../../../../shared/authz/permissions";
 import type { TodoDTO } from "../../dto/TodoDTO";
 import type { UpdateTodoContentInput } from "../../dto/UpdateTodoContentDTO";
 import { TodoNotFoundError } from "../../errors/TodoNotFound";
@@ -12,10 +8,11 @@ import { TodoMapper } from "../../mappers/TodoMapper";
 
 // Imports de Arquitectura
 import type { UseCase } from "../../UseCase";
-import type { DomainEventBus } from "../../../../../shared/events/DomainEventBus";
 import type { DomainEventTodo } from "../../../domain/events/DomainEvent";
 import { BaseUseCase } from "../../../../../shared/application/BaseUseCase";
 import { failure, success, type Result } from "../../../../../shared/core/Result";
+import type { Todo } from "../../../domain/entities/Todo";
+import type { TodoDependencies } from "../../TodoDependencies";
 
 type UpdateTodoErrors = TodoNotFoundError | Error;
 
@@ -23,41 +20,50 @@ export type UpdateTodoResponse =
   | { status: "updated"; todo: TodoDTO }
   | { status: "no_update"; todo: TodoDTO };
 
-export class UpdateTodoContent extends BaseUseCase<DomainEventTodo> implements UseCase<UpdateTodoContentInput, Result<UpdateTodoResponse, UpdateTodoErrors>> {
+// Extendemos correctamente BaseUseCase<Evento, Entidad>
+export class UpdateTodoContent extends BaseUseCase<DomainEventTodo, Todo> implements UseCase<UpdateTodoContentInput, Result<UpdateTodoResponse, UpdateTodoErrors>> {
   
-  private readonly repo: TodoRepository
-  private readonly uniquenessChecker: TodoUniquenessChecker
-  readonly eventBus: DomainEventBus<DomainEventTodo>
+  private readonly repo: TodoDependencies["todoRepo"];
+  // Definimos explícitamente el tipo para asegurar que no es undefined en la clase
+  private readonly uniquenessChecker: TodoUniquenessChecker;
 
-  constructor(
-    repo: TodoRepository,
-    uniquenessChecker: TodoUniquenessChecker,
-    eventBus: DomainEventBus<DomainEventTodo>
-  ) {
-    super(eventBus)
-    this.repo = repo;
-    this.uniquenessChecker = uniquenessChecker;
-    this.eventBus = eventBus;
+  constructor(deps: TodoDependencies) {
+    super(deps.eventBus);
+    this.repo = deps.todoRepo;
+
+    // Validación de Seguridad: Este caso de uso REQUIERE el checker
+    if (!deps.uniquenessChecker) {
+        throw new Error("Dependency 'uniquenessChecker' is required for UpdateTodoContent use case.");
+    }
+    this.uniquenessChecker = deps.uniquenessChecker;
   }
 
-  async execute(input: UpdateTodoContentInput, ctx: ActorContext): Promise<Result<UpdateTodoResponse, UpdateTodoErrors>> {
-    // 1. Validar Permisos
-    requirePermission(ctx, PERMISSIONS.TODO_UPDATE);
+  async execute(input: UpdateTodoContentInput): Promise<Result<UpdateTodoResponse, UpdateTodoErrors>> {
+    // 1. Validar Permisos: ELIMINADO (Lo maneja el Decorador)
 
-    const id = new TodoId(input.id);
-    const todo = await this.repo.getById(id);
+    // 2. BUSCAR AGREGADO (Usando getAggregate)
+    const result = await this.getAggregate(
+        input.id,
+        this.repo,
+        (rawId) => new TodoId(rawId),
+        (missingId) => new TodoNotFoundError(missingId, "update_content")
+    );
 
-    if (!todo) {
-        return failure(new TodoNotFoundError(input.id, "update_content"));
+    if (!result.isSuccess) {
+        return failure(result.error);
     }
+
+    const todo = result.value;
 
     let changed = false;
 
-    // 2. Aplicar Cambios (Lógica de Dominio)
+    // 3. Aplicar Cambios (Lógica de Dominio)
     
-    // A. Cambio de Título (Validación asíncrona de unicidad)
-    // Nota: Usamos todo.title (el string actual) si no viene uno nuevo
+    // A. Cambio de Título
+    // Nota: Si input.title es undefined, usamos el actual, creando un nuevo VO (o reutilizando lógica interna)
     const nextTitle = new TodoTitle(input.title ?? todo.title); 
+    
+    // Es seguro usar this.uniquenessChecker porque el constructor garantizó que existe
     const titleChanged = await todo.changeTitle(nextTitle, this.uniquenessChecker);
     changed = changed || titleChanged;
 
@@ -68,24 +74,18 @@ export class UpdateTodoContent extends BaseUseCase<DomainEventTodo> implements U
     
     const todoDto = TodoMapper.toDTO(todo);
 
-    // 3. Idempotencia / No-Op
+    // 4. Idempotencia / No-Op
     if (!changed) {
-      // El decorador registrará éxito, pero nosotros indicamos que no hubo cambios
-      return success({ status: "no_update", todo: todoDto });
+       return success({ status: "no_update", todo: todoDto });
     }
 
-    // 4. Persistencia
+    // 5. Persistencia
     await this.repo.save(todo);
 
-    // 5. Publicar Eventos
-    // (Importante: changeTitle o changeDescription podrían haber agregado eventos a la entidad)
-    const events = todo.pullDomainEvents();
-    if (events.length > 0) {
-        await this.eventBus.publish(events);
-    }
+    // 6. Publicar Eventos
+    await this.publishEvents(todo);
     
     return success({ status: "updated", todo: todoDto });
   }
 }
-
 
