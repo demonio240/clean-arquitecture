@@ -1,19 +1,18 @@
-import type { ActorContext } from "../../../../../shared/authz/ActorContext";
-import { requirePermission } from "../../../../../shared/authz/guards";
-import { PERMISSIONS } from "../../../../../shared/authz/permissions";
 import type { Clock } from "../../../../../shared/time/SystemClock";
 import { TodoId } from "../../../domain/value-objects/TodoId";
 import type { TodoDTO } from "../../dto/TodoDTO";
 import { TodoNotFoundError } from "../../errors/TodoNotFound";
 import { TodoMapper } from "../../mappers/TodoMapper";
-import type { TodoRepository } from "../../../domain/repositories/TodoRepository"; // Nuevo import
+import type { TodoRepository } from "../../../domain/repositories/TodoRepository";
 import type { UseCase } from "../../UseCase";
-import type { DomainEventBus } from "../../../../../shared/events/DomainEventBus";
 import type { DomainEventTodo } from "../../../domain/events/DomainEvent";
 import { BaseUseCase } from "../../../../../shared/application/BaseUseCase";
 import { failure, success, type Result } from "../../../../../shared/core/Result";
+// Importamos la Entidad (Valor)
+import type { Todo } from "../../../domain/entities/Todo";
+import type { TodoDependencies } from "../../TodoDependencies";
 
-type ReopenTodoErrors = TodoNotFoundError | Error; // esto puede ser posiblemente exportado a un archivo para tipos en comun
+type ReopenTodoErrors = TodoNotFoundError | Error;
 
 export type ReopenTodoResponse =
   | { status: "reopened"; todo: TodoDTO }
@@ -21,47 +20,53 @@ export type ReopenTodoResponse =
 
 export type ReopenTodoInput = { id: string };
 
-// Aplique un cambio acerca del manejo de errores
-export class ReopenTodo extends BaseUseCase<DomainEventTodo> implements UseCase<ReopenTodoInput, Result<ReopenTodoResponse, ReopenTodoErrors>> {
+// IMPORTANTE: El orden de genéricos es <Evento, Entidad>
+export class ReopenTodo extends BaseUseCase<DomainEventTodo, Todo> implements UseCase<ReopenTodoInput, Result<ReopenTodoResponse, ReopenTodoErrors>> {
   
-  private readonly todoRepo: TodoRepository
-  private readonly date: Clock
-  readonly eventBus: DomainEventBus<DomainEventTodo>
+  private readonly todoRepo: TodoRepository;
+  private readonly date: Clock;
 
-  // AHORA DEPENDE DE LOS REPOS, NO DEL UOW
-  constructor(
-    todoRepo: TodoRepository,
-    eventBus: DomainEventBus<DomainEventTodo>,
-    date: Clock
-  ) {
-    super(eventBus)
-    this.todoRepo = todoRepo;
-    this.eventBus = eventBus;
-    this.date = date;
+  // 2. CONSTRUCTOR LIMPIO: Recibe un solo objeto 'deps'
+  constructor(deps: TodoDependencies) {
+    super(deps.eventBus); // Extraemos lo que necesita el padre
+    this.todoRepo = deps.todoRepo;
+    this.date = deps.date;
   }
 
-  async execute(input: ReopenTodoInput, ctx: ActorContext): Promise<Result<ReopenTodoResponse, ReopenTodoErrors>> {
+  async execute(input: ReopenTodoInput): Promise<Result<ReopenTodoResponse, ReopenTodoErrors>> {
     const { id } = input;
 
-    requirePermission(ctx, PERMISSIONS.TODO_UPDATE);
+    // 1. BUSCAR AGREGADO (Usando el método genérico limpio)
+    // TypeScript infiere que usamos TodoId y obtenemos un Todo
+    const result = await this.getAggregate(
+        id,
+        this.todoRepo,
+        (rawId) => new TodoId(rawId),
+        // AQUÍ EL CAMBIO: Creamos el error nosotros mismos con la razón correcta
+        (missingId) => new TodoNotFoundError(missingId, "reopen") 
+    );
 
-    // Lógica plana y directa gracias al decorador transaccional
-    const todoId = new TodoId(id);
-    const todo = await this.todoRepo.getById(todoId);
-
-    if (!todo) {
-      return failure(new TodoNotFoundError(id, "reopen"));
+    // 2. VERIFICAR RESULTADO
+    if (!result.isSuccess) {
+        return failure(result.error);
     }
 
+    // 3. OBTENER LA ENTIDAD
+    // Aquí está la clave: usamos el valor devuelto por getAggregate
+    const todo = result.value; 
+
+    // --- LÓGICA DE NEGOCIO ---
     const wasReopened = todo.reopen(this.date.now());
 
     if (!wasReopened) {
        return success({ status: "already_open", todo: TodoMapper.toDTO(todo) });
     }
     
+    // 4. PERSISTENCIA
     await this.todoRepo.save(todo);
 
-    await this.publishEvents(todo); // Cambio de publicar eventos
+    // Publicacon de eventos 
+    await this.publishEvents(todo); 
 
     return success({ status: "reopened", todo: TodoMapper.toDTO(todo) });
   }

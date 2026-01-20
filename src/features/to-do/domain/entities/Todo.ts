@@ -11,6 +11,7 @@ import { LabelAlreadyExistsError } from '../errors/LabelAlreadyExistsError';
 //import { TodoAlreadyPendingError } from '../errors/TodoAlreadyPendingError';
 import { TodoReopenEvent } from '../events/TodoReopenEvent';
 import type { TodoUniquenessChecker } from '../services/TodoUniquenessChecker';
+import { TodoDeletedEvent } from '../events/TodoDeletedEvent';
 
 export type TodoProps = {
     id: TodoId,
@@ -149,6 +150,11 @@ export class Todo {
 
     this._labels.push(newLabel);
     return true;
+  }
+
+  public delete(date: Date): void {
+    // Registramos el evento de que fuimos eliminados
+    this.addDomainEvent(new TodoDeletedEvent(this.id, date));
   }
 
   // 3. MECANISMO PARA SACAR LOS EVENTOS
